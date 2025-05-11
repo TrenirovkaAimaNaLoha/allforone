@@ -1,1 +1,2821 @@
 
+local Players = game:GetService("Players")
+local selectedPlatform = "Square"
+local player = Players.LocalPlayer
+local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+if not hrp then
+	player.CharacterAdded:Wait()
+	hrp = player.Character:WaitForChild("HumanoidRootPart")
+end
+
+local UIS = game:GetService("UserInputService")
+local draggingFrame = false
+local dragStart
+local startPos
+
+local scrollFrame = Instance.new("ScrollingFrame", frame)
+scrollFrame.Size = UDim2.new(1, -20, 1, -90)
+scrollFrame.Position = UDim2.new(0, 10, 0, 60)
+scrollFrame.BackgroundTransparency = 1
+scrollFrame.BorderSizePixel = 0
+scrollFrame.ScrollBarThickness = 6
+scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+scrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scrollFrame.ClipsDescendants = true
+
+
+local StarterPosition = hrp.Position
+local ROOM_SIZE = 80
+local WALL_HEIGHT = 520
+local WALL_THICKNESS = 14
+local FLOOR_THICKNESS = 11
+local ROOM_NAME = "AutoFarmZone"
+local TRANSPARENCY = 0.8
+
+local ROOM_HEIGHT = 13400
+local stayInRoom = false
+local skyRoomPosition
+
+local function createGradient(parent)
+	local uiGradient = Instance.new("UIGradient", parent)
+	uiGradient.Color = ColorSequence.new{
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 127)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 255, 255))
+	}
+	uiGradient.Rotation = 45
+end
+
+local function startTransparencyFlicker(parts)
+	task.spawn(function()
+		local increasing = true
+		local currentTransparency = 0.7
+
+		while true do
+			for _, part in ipairs(parts) do
+				if part and part:IsA("BasePart") then
+					part.Transparency = currentTransparency
+				end
+			end
+
+			if increasing then
+				currentTransparency = currentTransparency + 0.01
+				if currentTransparency >= 0.9 then
+					currentTransparency = 0.9
+					increasing = false
+				end
+			else
+				currentTransparency = currentTransparency - 0.01
+				if currentTransparency <= 0.7 then
+					currentTransparency = 0.7
+					increasing = true
+				end
+			end
+
+			task.wait(0.05)
+		end
+	end)
+end
+
+-- Комната в небе
+local function createSkyRoom()
+	local center = Vector3.new(0, ROOM_HEIGHT, 0)
+
+	local function createPart(size, position, color)
+		local part = Instance.new("Part", workspace)
+		part.Size = size
+		part.Position = position
+		part.Anchored = true
+		part.Transparency = TRANSPARENCY
+		part.BrickColor = BrickColor.new(color)
+		part.Name = ROOM_NAME
+		return part
+	end
+
+	-- Потолок
+	createPart(Vector3.new(ROOM_SIZE, 1, ROOM_SIZE), center + Vector3.new(0, WALL_HEIGHT, 0), "Bright green")
+
+	-- Стены
+	local wallOffset = ROOM_SIZE / 2
+	local offsets = {
+		Vector3.new(-wallOffset - WALL_THICKNESS / 2, WALL_HEIGHT / 2, 0),
+		Vector3.new(wallOffset + WALL_THICKNESS / 2, WALL_HEIGHT / 2, 0),
+		Vector3.new(0, WALL_HEIGHT / 2, -wallOffset - WALL_THICKNESS / 2),
+		Vector3.new(0, WALL_HEIGHT / 2, wallOffset + WALL_THICKNESS / 2)
+	}
+
+	for _, offset in ipairs(offsets) do
+		local size = math.abs(offset.X) > 0 and Vector3.new(WALL_THICKNESS, WALL_HEIGHT, ROOM_SIZE) or Vector3.new(ROOM_SIZE, WALL_HEIGHT, WALL_THICKNESS)
+		createPart(size, center + offset, "Really black")
+	end
+
+	-- Пол по типу платформы
+	if selectedPlatform == "Square" then
+		createPart(Vector3.new(ROOM_SIZE, FLOOR_THICKNESS, ROOM_SIZE), center, "Bright green")
+
+	elseif selectedPlatform == "Circle" then
+		for x = -ROOM_SIZE/2, ROOM_SIZE/2, 5 do
+			for z = -ROOM_SIZE/2, ROOM_SIZE/2, 5 do
+				if (x^2 + z^2) <= (ROOM_SIZE/2)^2 then
+					createPart(Vector3.new(5, FLOOR_THICKNESS, 5), center + Vector3.new(x, 0, z), "Bright green")
+				end
+			end
+		end
+
+	elseif selectedPlatform == "Cross" then
+		local arm = ROOM_SIZE / 4
+		createPart(Vector3.new(ROOM_SIZE, FLOOR_THICKNESS, arm), center, "Bright green")
+		createPart(Vector3.new(arm, FLOOR_THICKNESS, ROOM_SIZE), center, "Bright green")
+
+	elseif selectedPlatform == "Spiral" then
+		local angleStep = math.pi / 12
+		for a = 0, 6 * math.pi, angleStep do
+			local r = a * 2
+			local x = math.cos(a) * r
+			local z = math.sin(a) * r
+			createPart(Vector3.new(6, FLOOR_THICKNESS, 6), center + Vector3.new(x, 0, z), "Bright green")
+		end
+
+	elseif selectedPlatform == "Corners" then
+		local offset = ROOM_SIZE / 2 - 10
+		local size = Vector3.new(20, FLOOR_THICKNESS, 20)
+		local positions = {
+			Vector3.new(-offset, 0, -offset),
+			Vector3.new(offset, 0, -offset),
+			Vector3.new(-offset, 0, offset),
+			Vector3.new(offset, 0, offset),
+		}
+		for _, pos in ipairs(positions) do
+			createPart(size, center + pos, "Bright green")
+		end
+	end
+
+	return center + Vector3.new(0, 5, 0)
+end
+
+
+
+
+-- Телепортация
+local function teleportToSkyRoom()
+	skyRoomPosition = createSkyRoom()
+	task.wait(0.3)
+	hrp.CFrame = CFrame.new(skyRoomPosition)
+	stayInRoom = true
+end
+
+local function teleportBack()
+	stayInRoom = false
+	hrp.CFrame = CFrame.new(StarterPosition)
+end
+
+-- Отслеживание смерти
+player.CharacterAdded:Connect(function(char)
+	task.wait(0.5)
+	hrp = char:WaitForChild("HumanoidRootPart")
+	if stayInRoom then
+		hrp.CFrame = CFrame.new(skyRoomPosition)
+	end
+end)
+
+-- Возвращение если игрок вышел
+task.spawn(function()
+	while true do
+		task.wait(1)
+		if stayInRoom and (hrp.Position.Y < ROOM_HEIGHT - 10 or hrp.Position.Y > ROOM_HEIGHT + WALL_HEIGHT) then
+			hrp.CFrame = CFrame.new(skyRoomPosition)
+		end
+	end
+end)
+
+-- Создание GUI
+local gui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
+gui.Name = "SkyRoomMenu"
+gui.ResetOnSpawn = false
+
+-- Кнопка открытия
+local openButton = Instance.new("TextButton", gui)
+openButton.Size = UDim2.new(0, 120, 0, 40)
+openButton.Position = UDim2.new(0, 10, 0, 10)
+openButton.Text = "Open menu"
+openButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+openButton.TextColor3 = Color3.new(1, 1, 1)
+createGradient(openButton)
+
+-- Окно меню
+local frame = Instance.new("Frame", gui)
+frame.Size = UDim2.new(0, 300, 0, 560)
+frame.Position = UDim2.new(0.5, -150, 0.5, -140)
+frame.Visible = false
+frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+frame.BorderSizePixel = 0
+frame.Active = false
+frame.Draggable = true
+createGradient(frame)
+
+-- Название
+local title = Instance.new("TextLabel", frame)
+title.Size = UDim2.new(1, 0, 0, 30)
+title.Text = "Almighty.acc (LegendsBattle)"
+title.Font = Enum.Font.GothamBold
+title.TextColor3 = Color3.new(1, 1, 1)
+title.BackgroundTransparency = 1
+title.TextScaled = true
+
+-- Подпись с эффектом набора текста
+local subtitle = Instance.new("TextLabel", frame)
+subtitle.Size = UDim2.new(1, 0, 0, 20)
+subtitle.Position = UDim2.new(0, 0, 0, 30)
+subtitle.Text = ""
+subtitle.Font = Enum.Font.Code
+subtitle.TextColor3 = Color3.new(1, 1, 1)
+subtitle.BackgroundTransparency = 1
+subtitle.TextScaled = true
+
+-- Функция набора текста
+local function typeText(label, text, delayTime)
+	for i = 1, #text do
+		label.Text = string.sub(text, 1, i)
+		task.wait(delayTime or 0.05)
+	end
+end
+
+-- Эффект набора и стирания с курсором
+local function loopTypeErase(label, text, delayTime, eraseTime)
+	while true do
+		-- Печать с "_"
+		for i = 1, #text do
+			label.Text = string.sub(text, 1, i) .. "_"
+			task.wait(delayTime or 0.05)
+		end
+		label.Text = text -- финальный без "_"
+		task.wait(0.5)
+
+		-- Стирание с "|"
+		for i = #text, 0, -1 do
+			label.Text = string.sub(text, 1, i) .. "|"
+			task.wait(eraseTime or 0.04)
+		end
+		label.Text = "" -- обнуление
+		task.wait(1.4)
+	end
+end
+
+-- Плавное появление + запуск анимации
+task.spawn(function()
+	task.wait(0.5)
+	frame.Visible = true
+	for i = 0, 1, 0.05 do
+		frame.BackgroundTransparency = 1 - i
+		task.wait(0.01)
+	end
+	loopTypeErase(subtitle, "by ilyatracher", 0.05, 0.035)
+end)
+
+
+-- Список
+local list = Instance.new("UIListLayout", frame)
+list.Padding = UDim.new(0, 6)
+list.SortOrder = Enum.SortOrder.LayoutOrder
+list.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+-- Отступ
+local spacer = Instance.new("Frame", frame)
+spacer.Size = UDim2.new(1, 0, 0, 60)
+spacer.BackgroundTransparency = 1
+
+-- Функция кнопки
+local function createButton(text, callback)
+	local btn = Instance.new("TextButton", frame)
+	btn.Size = UDim2.new(0.9, 0, 0, 36)
+    btn.Position = UDim2.new(0, 0, 0, 20)
+	btn.Text = text
+	btn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+	btn.TextColor3 = Color3.new(1, 1, 1)
+	btn.BorderSizePixel = 0
+	btn.Font = Enum.Font.Gotham
+	btn.TextScaled = true
+    createGradient(btn)
+	btn.MouseButton1Click:Connect(callback)
+end
+
+createButton("Форма: " .. selectedPlatform, function()
+	local options = {"Square"}
+	local currentIndex = table.find(options, selectedPlatform)
+	local nextIndex = currentIndex % #options + 1
+	selectedPlatform = options[nextIndex]
+	-- Обновляем текст кнопки
+	for _, child in ipairs(frame:GetChildren()) do
+		if child:IsA("TextButton") and string.find(child.Text, "Форма:") then
+			child.Text = "Форма: " .. selectedPlatform
+		end
+	end
+end)
+
+-- Кнопки
+createButton("Врубить хуйню", teleportToSkyRoom)
+createButton("Вырубить хуйню", teleportBack)
+createButton("Delete GUI", function() gui:Destroy() end)
+createButton("Close Menu", function()
+	frame.Visible = false
+	openButton.Visible = true
+end)
+
+-- Слайдер
+local sliderFrame = Instance.new("Frame", frame)
+sliderFrame.Size = UDim2.new(0.9, 0, 0, 40)
+sliderFrame.BackgroundTransparency = 1
+
+local sliderLabel = Instance.new("TextLabel", sliderFrame)
+sliderLabel.Size = UDim2.new(1, 0, 0, 20)
+sliderLabel.Text = "Room height: " .. ROOM_HEIGHT
+sliderLabel.TextColor3 = Color3.new(1, 1, 1)
+sliderLabel.BackgroundTransparency = 1
+sliderLabel.TextScaled = true
+
+local slider = Instance.new("TextButton", sliderFrame)
+slider.Size = UDim2.new(1, 0, 0, 20)
+slider.Position = UDim2.new(0, 0, 0, 20)
+slider.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+slider.Text = ""
+slider.AutoButtonColor = false
+
+local dragging = false
+slider.MouseButton1Down:Connect(function()
+	dragging = true
+end)
+game:GetService("UserInputService").InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		dragging = false
+	end
+end)
+slider.InputChanged:Connect(function(input)
+	if dragging and input.Position then
+		local relX = (input.Position.X - slider.AbsolutePosition.X) / slider.AbsoluteSize.X
+		relX = math.clamp(relX, 0, 1)
+		ROOM_HEIGHT = math.floor(13200 + (14000 - 13200) * relX)
+		sliderLabel.Text = "Высота Комнаты: " .. ROOM_HEIGHT
+	end
+end)
+
+frame.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		-- Игнорируем если мышка над слайдером
+		local mousePos = UIS:GetMouseLocation()
+		local sliderAbsPos = sliderFrame.AbsolutePosition
+		local sliderAbsSize = sliderFrame.AbsoluteSize
+		if mousePos.X >= sliderAbsPos.X and mousePos.X <= sliderAbsPos.X + sliderAbsSize.X and
+		   mousePos.Y >= sliderAbsPos.Y and mousePos.Y <= sliderAbsPos.Y + sliderAbsSize.Y then
+			return
+		end
+
+		draggingFrame = true
+		dragStart = input.Position
+		startPos = frame.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				draggingFrame = false
+			end
+		end)
+	end
+end)
+
+local function createSlider(name, min, max, default, onChange)
+	local frame = Instance.new("Frame", frame)
+	frame.Size = UDim2.new(0.9, 0, 0, 40)
+	frame.BackgroundTransparency = 1
+
+	local label = Instance.new("TextLabel", frame)
+	label.Size = UDim2.new(1, 0, 0, 20)
+	label.Text = name .. ": " .. default
+	label.TextColor3 = Color3.new(1, 1, 1)
+	label.BackgroundTransparency = 1
+	label.TextScaled = true
+
+	local bar = Instance.new("TextButton", frame)
+	bar.Size = UDim2.new(1, 0, 0, 20)
+	bar.Position = UDim2.new(0, 0, 0, 20)
+	bar.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+	bar.Text = ""
+	bar.AutoButtonColor = false
+
+	local dragging = false
+	bar.MouseButton1Down:Connect(function()
+		dragging = true
+	end)
+	game:GetService("UserInputService").InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = false
+		end
+	end)
+	bar.InputChanged:Connect(function(input)
+		if dragging and input.Position then
+			local relX = (input.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X
+			relX = math.clamp(relX, 0, 1)
+			local value = math.floor(min + (max - min) * relX)
+			label.Text = name .. ": " .. value
+			onChange(value)
+		end
+	end)
+end
+
+-- Слайдеры параметров комнаты
+createSlider("Размер Комнаты", 5, 200, ROOM_SIZE, function(val)
+	ROOM_SIZE = val
+end)
+
+createSlider("Толщина Стен", 2, 30, WALL_THICKNESS, function(val)
+	WALL_THICKNESS = val
+end)
+
+createSlider("Высота Стен", 10, 1000, WALL_HEIGHT, function(val)
+	WALL_HEIGHT = val
+end)
+
+createSlider("Толщина Пола", 2, 40, FLOOR_THICKNESS, function(val)
+	FLOOR_THICKNESS = val
+end)
+
+-- Replace the existing frame dragging code with this mobile-friendly version
+local dragInput
+local dragStart
+local startPos
+local dragging = false
+
+local function updateDrag(input)
+    local delta = input.Position - dragStart
+    frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+end
+
+frame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        -- Ignore if clicking/touching the slider
+        local inputPos = input.Position
+        local sliderAbsPos = sliderFrame.AbsolutePosition
+        local sliderAbsSize = sliderFrame.AbsoluteSize
+        
+        if inputPos.X >= sliderAbsPos.X and inputPos.X <= sliderAbsPos.X + sliderAbsSize.X and
+           inputPos.Y >= sliderAbsPos.Y and inputPos.Y <= sliderAbsPos.Y + sliderAbsSize.Y then
+            return
+        end
+        
+        dragging = true
+        dragStart = input.Position
+        startPos = frame.Position
+    end
+end)
+
+frame.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+frame.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+UIS.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        updateDrag(input)
+    end
+end)
+
+
+UIS.InputChanged:Connect(function(input)
+	if draggingFrame and input.UserInputType == Enum.UserInputType.MouseMovement then
+		local delta = input.Position - dragStart
+		frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+	end
+end)
+
+-- Кнопка "Открыть Меню"
+openButton.MouseButton1Click:Connect(function()
+	frame.Visible = true
+	openButton.Visible = false
+end)
+
+
+
+--// Services
+local Players = game:GetService("Players")
+local VirtualUser = game:GetService("VirtualUser")
+local TweenService = game:GetService("TweenService")
+
+local LocalPlayer = Players.LocalPlayer
+
+--// GUI Setup
+local gui = Instance.new("ScreenGui", game.CoreGui)
+gui.Name = "SmartAntiAFK"
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+local main = Instance.new("Frame", gui)
+main.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+main.Position = UDim2.new(0.7, 0, 0.2, 0)
+main.Size = UDim2.new(0, 350, 0, 180)
+main.Active = true
+main.Draggable = true
+main.BorderSizePixel = 0
+main.BackgroundTransparency = 0.1
+main.ClipsDescendants = true
+
+--// Заголовок
+local title = Instance.new("TextLabel", main)
+title.Size = UDim2.new(1, 0, 0, 40)
+title.BackgroundTransparency = 1
+title.Font = Enum.Font.GothamBold
+title.Text = "🌙 Smart Anti-AFK"
+title.TextColor3 = Color3.fromRGB(0, 255, 255)
+title.TextSize = 24
+
+--// Радужная линия под заголовком
+local rainbowLine = Instance.new("Frame", main)
+rainbowLine.Position = UDim2.new(0, 0, 0, 40)
+rainbowLine.Size = UDim2.new(1, 0, 0, 3)
+rainbowLine.BorderSizePixel = 0
+rainbowLine.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+
+-- Радужная анимация
+task.spawn(function()
+	while true do
+		for i = 0, 1, 0.01 do
+			local color = Color3.fromHSV(i, 1, 1)
+			rainbowLine.BackgroundColor3 = color
+			task.wait(0.03)
+		end
+	end
+end)
+
+--// Статус
+local status = Instance.new("TextLabel", main)
+status.Position = UDim2.new(0, 0, 0.3, 0)
+status.Size = UDim2.new(1, 0, 0, 30)
+status.BackgroundTransparency = 1
+status.Font = Enum.Font.Gotham
+status.Text = "Status: ✅ Active"
+status.TextColor3 = Color3.fromRGB(150, 255, 150)
+status.TextSize = 18
+
+--// Typewriter Credits
+local credits = Instance.new("TextLabel", main)
+credits.Position = UDim2.new(0, 0, 1, -25)
+credits.Size = UDim2.new(1, 0, 0, 20)
+credits.BackgroundTransparency = 1
+credits.Font = Enum.Font.Gotham
+credits.Text = ""
+credits.TextColor3 = Color3.fromRGB(150, 150, 255)
+credits.TextSize = 14
+
+-- Typewriter функция
+local function typewriterEffect(text)
+	credits.Text = ""
+	for i = 1, #text do
+		credits.Text = string.sub(text, 1, i)
+		wait(0.05)
+	end
+	wait(2)
+	-- исчезновение
+	for i = 1, #text do
+		credits.Text = string.sub(text, 1, #text - i)
+		wait(0.03)
+	end
+end
+
+-- Бесконечная печать
+task.spawn(function()
+	while true do
+		typewriterEffect(" Created by ilyatracher ✨")
+	end
+end)
+
+--// Notification
+local function createNotification(message)
+	local notif = Instance.new("TextLabel", gui)
+	notif.Size = UDim2.new(0, 300, 0, 40)
+	notif.Position = UDim2.new(1, -310, 1, -100)
+	notif.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	notif.BorderSizePixel = 0
+	notif.Text = "🔔 " .. message
+	notif.TextColor3 = Color3.fromRGB(255, 255, 255)
+	notif.Font = Enum.Font.GothamSemibold
+	notif.TextSize = 18
+	notif.BackgroundTransparency = 1
+	notif.TextTransparency = 1
+
+	TweenService:Create(notif, TweenInfo.new(0.5), {
+		BackgroundTransparency = 0,
+		TextTransparency = 0
+	}):Play()
+
+	wait(2.5)
+
+	TweenService:Create(notif, TweenInfo.new(0.5), {
+		BackgroundTransparency = 1,
+		TextTransparency = 1
+	}):Play()
+
+	wait(0.5)
+	notif:Destroy()
+end
+
+--// Anti-AFK
+LocalPlayer.Idled:Connect(function()
+	VirtualUser:CaptureController()
+	VirtualUser:ClickButton2(Vector2.new())
+	status.Text = "Status: ⚠ Roblox tried to kick you!"
+	status.TextColor3 = Color3.fromRGB(255, 200, 0)
+	createNotification("Blocked AFK kick attempt!")
+
+	wait(2)
+	status.Text = "Status: ✅ Active"
+	status.TextColor3 = Color3.fromRGB(150, 255, 150)
+end)
+
+
+
+
+
+
+local Player = game:GetService("Players").LocalPlayer
+local PlayerGui = Player:WaitForChild("PlayerGui")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+-- GUI Styles
+local COLORS = {
+    BACKGROUND = Color3.fromRGB(35, 35, 50),
+    HEADER = Color3.fromRGB(45, 45, 65),
+    BUTTON = Color3.fromRGB(60, 60, 85),
+    ENABLED = Color3.fromRGB(46, 204, 113),
+    DISABLED = Color3.fromRGB(231, 76, 60),
+    TEXT = Color3.fromRGB(255, 255, 255)
+}
+
+local function CreateRoundedFrame(size, position)
+    local frame = Instance.new("Frame")
+    frame.Size = size
+    frame.Position = position
+    frame.BackgroundColor3 = COLORS.BACKGROUND
+    frame.BorderSizePixel = 0
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 10)
+    corner.Parent = frame
+    
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(255, 255, 255)
+    stroke.Transparency = 0.9
+    stroke.Thickness = 1
+    stroke.Parent = frame
+    
+    return frame
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "EnhancedKillStreakGUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = PlayerGui
+
+local Frame = CreateRoundedFrame(
+    UDim2.new(0, 250, 0, 200),
+    UDim2.new(0.5, -125, 0.5, -100)
+)
+Frame.AnchorPoint = Vector2.new(0.5, 0.5)
+Frame.Visible = false
+Frame.Parent = ScreenGui
+
+local Shadow = Instance.new("ImageLabel")
+Shadow.Size = UDim2.new(1.2, 0, 1.2, 0)
+Shadow.Position = UDim2.new(0.5, 0, 0.5, 0)
+Shadow.AnchorPoint = Vector2.new(0.5, 0.5)
+Shadow.BackgroundTransparency = 1
+Shadow.Image = "rbxassetid://1316045217"
+Shadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+Shadow.ImageTransparency = 0.6
+Shadow.ZIndex = -1
+Shadow.Parent = Frame
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 40)
+Title.BackgroundColor3 = COLORS.HEADER
+Title.Text = "KILLSTREAK STEALER"
+Title.TextColor3 = COLORS.TEXT
+Title.TextSize = 18
+Title.Font = Enum.Font.GothamBold
+Title.Parent = Frame
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 10)
+UICorner.Parent = Title
+
+local KillCounter = Instance.new("TextLabel")
+KillCounter.Size = UDim2.new(0.9, 0, 0, 35)
+KillCounter.Position = UDim2.new(0.05, 0, 0.3, 0)
+KillCounter.BackgroundColor3 = COLORS.BUTTON
+KillCounter.TextColor3 = COLORS.TEXT
+KillCounter.Text = "KILLS: 0/9"
+KillCounter.TextSize = 16
+KillCounter.Font = Enum.Font.GothamSemibold
+KillCounter.Parent = Frame
+
+UICorner:Clone().Parent = KillCounter
+
+local ToggleButton = Instance.new("TextButton")
+ToggleButton.Size = UDim2.new(0.9, 0, 0, 35)
+ToggleButton.Position = UDim2.new(0.05, 0, 0.5, 0)
+ToggleButton.BackgroundColor3 = COLORS.DISABLED
+ToggleButton.TextColor3 = COLORS.TEXT
+ToggleButton.Text = "DISABLED"
+ToggleButton.TextSize = 16
+ToggleButton.Font = Enum.Font.GothamBold
+ToggleButton.Parent = Frame
+
+UICorner:Clone().Parent = ToggleButton
+
+local DeleteButton = Instance.new("TextButton")
+DeleteButton.Size = UDim2.new(0.9, 0, 0, 35)
+DeleteButton.Position = UDim2.new(0.05, 0, 0.7, 0)
+DeleteButton.BackgroundColor3 = COLORS.BUTTON
+DeleteButton.TextColor3 = COLORS.TEXT
+DeleteButton.Text = "DELETE GUI"
+DeleteButton.TextSize = 16
+DeleteButton.Font = Enum.Font.GothamBold
+DeleteButton.Parent = Frame
+
+UICorner:Clone().Parent = DeleteButton
+
+local function CreateNotification(text, duration)
+    local NotificationGui = Instance.new("ScreenGui")
+    NotificationGui.Name = "EnhancedNotification"
+    NotificationGui.Parent = PlayerGui
+
+    local NotifFrame = CreateRoundedFrame(
+    UDim2.new(0, 250, 0, 60),
+    UDim2.new(0.5, -125, 0.7, 0)  -- Changed from 0.85 to 0.7
+)
+    NotifFrame.BackgroundTransparency = 0.1
+    NotifFrame.Parent = NotificationGui
+
+    local NotifText = Instance.new("TextLabel")
+    NotifText.Size = UDim2.new(0.9, 0, 0.9, 0)
+    NotifText.Position = UDim2.new(0.05, 0, 0.05, 0)
+    NotifText.BackgroundTransparency = 1
+    NotifText.TextColor3 = COLORS.TEXT
+    NotifText.Text = text
+    NotifText.TextSize = 16
+    NotifText.Font = Enum.Font.GothamSemibold
+    NotifText.TextWrapped = true
+    NotifText.Parent = NotifFrame
+
+    NotifFrame.Position = UDim2.new(0.5, -125, 1.1, 0)
+    local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Bounce)
+    local tween = TweenService:Create(NotifFrame, tweenInfo, {
+        Position = UDim2.new(0.5, -125, 0.7, 0)  -- Changed from 0.85 to 0.7
+    })
+    tween:Play()
+
+    game.Debris:AddItem(NotificationGui, duration)
+    delay(duration - 0.5, function()
+        local fadeTween = TweenService:Create(NotifFrame, TweenInfo.new(0.5), {
+            BackgroundTransparency = 1
+        })
+        local textFadeTween = TweenService:Create(NotifText, TweenInfo.new(0.5), {
+            TextTransparency = 1
+        })
+        fadeTween:Play()
+        textFadeTween:Play()
+    end)
+end
+
+
+local killStreakEnabled = false
+local requiredKills = 9
+local lastKills = 0
+local killTracker = Player:WaitForChild("leaderstats"):WaitForChild("Total Kills")
+
+local function UpdateButton()
+    ToggleButton.Text = killStreakEnabled and "ENABLED" or "DISABLED"
+    ToggleButton.BackgroundColor3 = killStreakEnabled and COLORS.ENABLED or COLORS.DISABLED
+end
+
+local function UpdateKillCounter()
+    local currentKills = killTracker.Value - lastKills
+    KillCounter.Text = string.format("KILLS: %d/%d", currentKills, requiredKills)
+end
+
+local function OnKillChange(newValue)
+    local currentKills = newValue - lastKills
+    UpdateKillCounter()
+    
+    if killStreakEnabled then
+        if currentKills >= requiredKills then
+            CreateNotification("Kill limit reached! Character will be eliminated", 3)
+            if Player.Character and Player.Character:FindFirstChild("Humanoid") then
+                Player.Character.Humanoid.Health = 0
+                lastKills = killTracker.Value
+            end
+        else
+            CreateNotification(string.format("Kills remaining: %d", requiredKills - currentKills), 2)
+        end
+    end
+end
+
+ToggleButton.MouseButton1Click:Connect(function()
+    killStreakEnabled = not killStreakEnabled
+    UpdateButton()
+    CreateNotification(killStreakEnabled and "Killstreak Enabled!" or "Killstreak Disabled!", 2)
+end)
+
+DeleteButton.MouseButton1Click:Connect(function()
+    ScreenGui:Destroy()
+end)
+
+local function CreateRainbowText()
+    local RainbowText = Instance.new("TextLabel")
+    RainbowText.Size = UDim2.new(1, 0, 0, 20)
+    RainbowText.Position = UDim2.new(0, 0, 0.2, 0)
+    RainbowText.BackgroundTransparency = 1
+    RainbowText.TextColor3 = COLORS.TEXT
+    RainbowText.TextSize = 14
+    RainbowText.Font = Enum.Font.GothamBold
+    RainbowText.Parent = Frame
+
+    local fullText = "by ilyatracher"
+    local typingSpeed = 0.1
+    local pauseDuration = 2
+    local rainbowSpeed = 0.5
+
+    while true do
+        RainbowText.Text = ""
+        for i = 1, #fullText do
+            RainbowText.Text = string.sub(fullText, 1, i)
+            wait(typingSpeed)
+        end
+        
+        for i = 0, 1, 0.01 do
+            RainbowText.TextColor3 = Color3.fromHSV(i, 1, 1)
+            wait(rainbowSpeed/100)
+        end
+        
+        wait(pauseDuration)
+        
+        for i = #fullText, 0, -1 do
+            RainbowText.Text = string.sub(fullText, 1, i)
+            wait(typingSpeed)
+        end
+        
+        wait(1)
+    end
+end
+
+coroutine.wrap(CreateRainbowText)()
+
+UserInputService.InputBegan:Connect(function(input, processed)
+    if not processed and input.KeyCode == Enum.KeyCode.RightControl then
+        Frame.Visible = not Frame.Visible
+    end
+end)
+
+killTracker.Changed:Connect(OnKillChange)
+lastKills = killTracker.Value
+UpdateButton()
+UpdateKillCounter()
+
+Player.CharacterAdded:Connect(function()
+    UpdateKillCounter()
+    CreateNotification("Character Respawned - Killstreak Counter Reset", 3)
+end)
+
+local isDragging = false
+local dragStart = nil
+local startPos = nil
+
+Title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        isDragging = true
+        dragStart = input.Position
+        startPos = Frame.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement and isDragging then
+        local delta = input.Position - dragStart
+        Frame.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        isDragging = false
+        dragStart = nil
+        startPos = nil
+    end
+end)
+
+Title.MouseEnter:Connect(function()
+    Title.BackgroundColor3 = COLORS.BUTTON
+end)
+
+Title.MouseLeave:Connect(function()
+    Title.BackgroundColor3 = COLORS.HEADER
+end)
+
+local ignoredPlayers = {} -- Таблица для хранения игнорируемых игроков
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local autoNearestEnabled = false
+
+-- Constants for styling
+local DISCORD_COLORS = {
+    Background = Color3.fromRGB(54, 57, 63),
+    SecondaryBg = Color3.fromRGB(47, 49, 54),
+    AccentColor = Color3.fromRGB(114, 137, 218),
+    TextColor = Color3.fromRGB(255, 255, 255),
+    ErrorColor = Color3.fromRGB(240, 71, 71),
+    SuccessColor = Color3.fromRGB(67, 181, 129)
+}
+
+local function enableTouchDragging(frame)
+    local dragging = false
+    local dragStart = nil
+    local startPos = nil
+
+    frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+        end
+    end)
+
+    UserInputService.TouchMoved:Connect(function(input)
+        if dragging then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    UserInputService.TouchEnded:Connect(function(input)
+        dragging = false
+    end)
+end
+
+local ROTATION_MODES = {
+    "Circle",
+    "Spiral",
+    "Figure 8",
+    "Random",
+    "Zigzag",
+    "Wave",
+    "Square",
+    "Triangle",
+    "Infinity"
+}
+
+-- Variables
+local isRotating = false
+local selectedPlayer = nil
+local rotationOffset = 5
+local rotationSpeed = 1
+local rotationAngle = 0
+local currentMode = "Circle"
+local isLocked = false
+local guiVisible = true
+local spiralHeight = 0
+local VELOCITY_SMOOTHING = 0.8
+
+-- Create main GUI
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "EnhancedPlayerRotatorGui"
+ScreenGui.ResetOnSpawn = false
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 300, 0, 640)
+MainFrame.Position = UDim2.new(0.5, -150, 0.5, -250)
+MainFrame.BackgroundColor3 = DISCORD_COLORS.Background
+MainFrame.BorderSizePixel = 0
+MainFrame.Parent = ScreenGui
+
+-- Make GUI draggable
+local function enableDragging(frame)
+    local dragging = false
+    local dragStart = nil
+    local startPos = nil
+
+    frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or 
+           input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+        end
+    end)
+
+    local inputChanged = isMobile and UserInputService.TouchMoved or UserInputService.InputChanged
+    inputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or 
+                         input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    local inputEnded = isMobile and UserInputService.TouchEnded or UserInputService.InputEnded
+    inputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or 
+           input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+end
+
+-- Title bar
+local TitleBar = Instance.new("Frame")
+TitleBar.Name = "TitleBar"
+TitleBar.Size = UDim2.new(1, 0, 0, 30)
+TitleBar.BackgroundColor3 = DISCORD_COLORS.SecondaryBg
+TitleBar.BorderSizePixel = 0
+TitleBar.Parent = MainFrame
+
+-- Add gradient effect to TitleBar
+local UIGradient = Instance.new("UIGradient")
+UIGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(54, 57, 63)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(64, 67, 73)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(54, 57, 63))
+})
+UIGradient.Parent = TitleBar
+
+-- Animate gradient
+local gradientRotation = 0
+task.spawn(function()
+    while task.wait() do
+        gradientRotation = gradientRotation + 1
+        if gradientRotation >= 360 then
+            gradientRotation = 0
+        end
+        UIGradient.Rotation = gradientRotation
+    end
+end)
+
+-- Main title text
+local TitleText = Instance.new("TextLabel")
+TitleText.Name = "TitleText"
+TitleText.Size = UDim2.new(1, -30, 1, 0)
+TitleText.Position = UDim2.new(0, 10, 0, 0)
+TitleText.BackgroundTransparency = 1
+TitleText.Text = "Almighty.acc (autofarm)"
+TitleText.TextColor3 = DISCORD_COLORS.TextColor
+TitleText.TextSize = 13
+TitleText.Font = Enum.Font.GothamBold
+TitleText.TextXAlignment = Enum.TextXAlignment.Left
+TitleText.TextTransparency = 1  -- Start fully transparent
+TitleText.Parent = TitleBar
+
+-- Create stroke effect for main text
+local TextStroke = Instance.new("UIStroke")
+TextStroke.Color = Color3.fromRGB(114, 137, 218)
+TextStroke.Thickness = 1
+TextStroke.Transparency = 0.5
+TextStroke.Parent = TitleText
+
+
+
+-- Create subtitle with typing effect
+local SubtitleText = Instance.new("TextLabel")
+SubtitleText.Name = "SubtitleText"
+SubtitleText.Size = UDim2.new(1, -30, 1, 0)
+SubtitleText.Position = UDim2.new(0, 10, 0.65, 0)
+SubtitleText.BackgroundTransparency = 1
+SubtitleText.Text = "by ilyatracher"
+SubtitleText.TextColor3 = Color3.fromRGB(114, 137, 218)
+SubtitleText.TextSize = 12
+SubtitleText.Font = Enum.Font.GothamSemibold
+SubtitleText.TextXAlignment = Enum.TextXAlignment.Left
+SubtitleText.TextTransparency = 1
+SubtitleText.Parent = TitleBar
+
+-- Function to fade text in and out
+local function fadeTextInOut(textLabel, fadeInTime, stayTime, fadeOutTime)
+    while true do
+        -- Fade in
+        for i = 1, 0, -0.1 do
+            textLabel.TextTransparency = i
+            wait(fadeInTime * 0.1)
+        end
+        
+        -- Stay visible
+        wait(stayTime)
+        
+        -- Fade out
+        for i = 0, 1, 0.1 do
+            textLabel.TextTransparency = i
+            wait(fadeOutTime * 0.1)
+        end
+        
+        -- Wait before next cycle
+        wait(1)
+    end
+end
+
+-- Function to create typing effect with fade
+local function typeTextWithFade(initialText, additionalText, delay)
+    while true do
+        -- Reset text
+        SubtitleText.Text = initialText
+        SubtitleText.TextTransparency = 1
+        
+        -- Fade in initial text
+        for i = 1, 0, -0.1 do
+            SubtitleText.TextTransparency = i
+            wait(0.03)
+        end
+        
+        -- Wait before typing additional text
+        wait(0.5)
+        
+        -- Type out additional text
+        local currentText = initialText
+        for i = 1, #additionalText do
+            currentText = currentText .. additionalText:sub(i,i)
+            SubtitleText.Text = currentText
+            wait(delay)
+        end
+        
+        -- Keep full text visible for a while
+        wait(2)
+        
+        -- Fade out
+        for i = 0, 1, 0.1 do
+            SubtitleText.TextTransparency = i
+            wait(0.03)
+        end
+        
+        -- Wait before next cycle
+        wait(1)
+    end
+end
+
+-- Create rainbow effect for subtitle
+local function updateRainbowEffect()
+    local tick = 0
+    while wait() do
+        tick = tick + 0.01
+        SubtitleText.TextColor3 = Color3.fromHSV(math.abs(math.sin(tick)), 0.8, 1)
+    end
+end
+
+-- Start all animations
+spawn(function()
+    fadeTextInOut(TitleText, 0.05, 3, 0.05)
+end)
+
+spawn(function()
+    typeTextWithFade("by ilyatracher ", "| premium user", 0.1)
+end)
+
+spawn(updateRainbowEffect)
+
+-- Add hover effect for TitleBar
+local function createHoverEffect()
+    local isHovering = false
+    
+    TitleBar.MouseEnter:Connect(function()
+        isHovering = true
+        for i = 0, 0.2, 0.02 do
+            if not isHovering then break end
+            TitleBar.BackgroundColor3 = DISCORD_COLORS.SecondaryBg:Lerp(DISCORD_COLORS.AccentColor, i)
+            wait()
+        end
+    end)
+    
+    TitleBar.MouseLeave:Connect(function()
+        isHovering = false
+        for i = 0.2, 0, -0.02 do
+            TitleBar.BackgroundColor3 = DISCORD_COLORS.SecondaryBg:Lerp(DISCORD_COLORS.AccentColor, i)
+            wait()
+        end
+    end)
+end
+
+createHoverEffect()
+
+local ContentFrame = Instance.new("Frame")
+ContentFrame.Name = "ContentFrame"
+ContentFrame.Size = UDim2.new(1, -20, 1, -40)
+ContentFrame.Position = UDim2.new(0, 10, 0, 35)
+ContentFrame.BackgroundTransparency = 1
+ContentFrame.Parent = MainFrame
+
+-- Теперь создаем AutoNearestButton
+local AutoNearestButton = Instance.new("TextButton")
+AutoNearestButton.Size = UDim2.new(1, 0, 0, 30)
+AutoNearestButton.Position = UDim2.new(0, 0, 0, 565) -- Обновите позицию по необходимости
+AutoNearestButton.BackgroundColor3 = DISCORD_COLORS.SecondaryBg
+AutoNearestButton.Text = "Auto Nearest: OFF"
+AutoNearestButton.TextColor3 = DISCORD_COLORS.TextColor
+AutoNearestButton.TextSize = 14
+AutoNearestButton.Font = Enum.Font.GothamBold
+AutoNearestButton.Parent = ContentFrame
+
+-- Create timestamp display
+local TimeStampText = Instance.new("TextLabel")
+TimeStampText.Name = "TimeStampText"
+TimeStampText.Size = UDim2.new(0, 200, 0, 20)
+TimeStampText.Position = UDim2.new(1, -210, 0, 5)
+TimeStampText.BackgroundTransparency = 1
+TimeStampText.TextColor3 = Color3.fromRGB(185, 187, 190)
+TimeStampText.TextSize = 11
+TimeStampText.Font = Enum.Font.GothamSemibold
+TimeStampText.TextXAlignment = Enum.TextXAlignment.Right
+TimeStampText.Parent = TitleBar
+
+-- Update timestamp
+spawn(function()
+    while wait(1) do
+        local date = os.date("!*t")  -- Use UTC time
+        TimeStampText.Text = string.format(
+            "%04d-%02d-%02d %02d:%02d:%02d UTC", 
+            date.year, date.month, date.day, 
+            date.hour, date.min, date.sec
+        )
+    end
+end)
+
+-- Content container
+local ContentFrame = Instance.new("Frame")
+ContentFrame.Name = "ContentFrame"
+ContentFrame.Size = UDim2.new(1, -20, 1, -40)
+ContentFrame.Position = UDim2.new(0, 10, 0, 35)
+ContentFrame.BackgroundTransparency = 1
+ContentFrame.Parent = MainFrame
+
+-- Player selector
+local PlayerLabel = Instance.new("TextLabel")
+PlayerLabel.Size = UDim2.new(1, 0, 0, 20)
+PlayerLabel.BackgroundTransparency = 1
+PlayerLabel.Text = "Select Target Player:"
+PlayerLabel.TextColor3 = DISCORD_COLORS.TextColor
+PlayerLabel.TextSize = 14
+PlayerLabel.Font = Enum.Font.GothamSemibold
+PlayerLabel.TextXAlignment = Enum.TextXAlignment.Left
+PlayerLabel.Parent = ContentFrame
+
+local PlayerDropdown = Instance.new("TextButton")
+PlayerDropdown.Size = UDim2.new(1, 0, 0, 30)
+PlayerDropdown.Position = UDim2.new(0, 0, 0, 25)
+PlayerDropdown.BackgroundColor3 = DISCORD_COLORS.SecondaryBg
+PlayerDropdown.Text = "Select Player"
+PlayerDropdown.TextColor3 = DISCORD_COLORS.TextColor
+PlayerDropdown.TextSize = 14
+PlayerDropdown.Font = Enum.Font.Gotham
+PlayerDropdown.Parent = ContentFrame
+
+-- Rotation mode selector
+local ModeLabel = Instance.new("TextLabel")
+ModeLabel.Size = UDim2.new(1, 0, 0, 20)
+ModeLabel.Position = UDim2.new(0, 0, 0, 70)
+ModeLabel.BackgroundTransparency = 1
+ModeLabel.Text = "Rotation Mode:"
+ModeLabel.TextColor3 = DISCORD_COLORS.TextColor
+ModeLabel.TextSize = 14
+ModeLabel.Font = Enum.Font.GothamSemibold
+ModeLabel.TextXAlignment = Enum.TextXAlignment.Left
+ModeLabel.Parent = ContentFrame
+
+local ModeDropdown = Instance.new("TextButton")
+ModeDropdown.Size = UDim2.new(1, 0, 0, 30)
+ModeDropdown.Position = UDim2.new(0, 0, 0, 95)
+ModeDropdown.BackgroundColor3 = DISCORD_COLORS.SecondaryBg
+ModeDropdown.Text = "Circle"
+ModeDropdown.TextColor3 = DISCORD_COLORS.TextColor
+ModeDropdown.TextSize = 14
+ModeDropdown.Font = Enum.Font.Gotham
+ModeDropdown.Parent = ContentFrame
+
+-- Offset slider
+local OffsetLabel = Instance.new("TextLabel")
+OffsetLabel.Size = UDim2.new(1, 0, 0, 20)
+OffsetLabel.Position = UDim2.new(0, 0, 0, 140)
+OffsetLabel.BackgroundTransparency = 1
+OffsetLabel.Text = "Rotation Offset (studs):"
+OffsetLabel.TextColor3 = DISCORD_COLORS.TextColor
+OffsetLabel.TextSize = 14
+OffsetLabel.Font = Enum.Font.GothamSemibold
+OffsetLabel.TextXAlignment = Enum.TextXAlignment.Left
+OffsetLabel.Parent = ContentFrame
+
+local OffsetFrame = Instance.new("Frame")
+OffsetFrame.Size = UDim2.new(1, 0, 0, 30)
+OffsetFrame.Position = UDim2.new(0, 0, 0, 165)
+OffsetFrame.BackgroundColor3 = DISCORD_COLORS.SecondaryBg
+OffsetFrame.Parent = ContentFrame
+
+local OffsetValue = Instance.new("TextBox")
+OffsetValue.Size = UDim2.new(0, 50, 1, -6)
+OffsetValue.Position = UDim2.new(1, -55, 0, 3)
+OffsetValue.BackgroundColor3 = DISCORD_COLORS.Background
+OffsetValue.Text = "5"
+OffsetValue.TextColor3 = DISCORD_COLORS.TextColor
+OffsetValue.TextSize = 14
+OffsetValue.Font = Enum.Font.Gotham
+OffsetValue.Parent = OffsetFrame
+
+-- Speed slider
+local SpeedLabel = Instance.new("TextLabel")
+SpeedLabel.Size = UDim2.new(1, 0, 0, 20)
+SpeedLabel.Position = UDim2.new(0, 0, 0, 210)
+SpeedLabel.BackgroundTransparency = 1
+SpeedLabel.Text = "Rotation Speed:"
+SpeedLabel.TextColor3 = DISCORD_COLORS.TextColor
+SpeedLabel.TextSize = 14
+SpeedLabel.Font = Enum.Font.GothamSemibold
+SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
+SpeedLabel.Parent = ContentFrame
+
+local SpeedFrame = Instance.new("Frame")
+SpeedFrame.Size = UDim2.new(1, 0, 0, 30)
+SpeedFrame.Position = UDim2.new(0, 0, 0, 235)
+SpeedFrame.BackgroundColor3 = DISCORD_COLORS.SecondaryBg
+SpeedFrame.Parent = ContentFrame
+
+local SpeedValue = Instance.new("TextBox")
+SpeedValue.Size = UDim2.new(0, 50, 1, -6)
+SpeedValue.Position = UDim2.new(1, -55, 0, 3)
+SpeedValue.BackgroundColor3 = DISCORD_COLORS.Background
+SpeedValue.Text = "1"
+SpeedValue.TextColor3 = DISCORD_COLORS.TextColor
+SpeedValue.TextSize = 14
+SpeedValue.Font = Enum.Font.Gotham
+SpeedValue.Parent = SpeedFrame
+
+-- Lock button
+local LockButton = Instance.new("TextButton")
+LockButton.Size = UDim2.new(1, 0, 0, 40)
+LockButton.Position = UDim2.new(0, 0, 0, 280)
+LockButton.BackgroundColor3 = DISCORD_COLORS.SecondaryBg
+LockButton.Text = "Lock View"
+LockButton.TextColor3 = DISCORD_COLORS.TextColor
+LockButton.TextSize = 16
+LockButton.Font = Enum.Font.GothamBold
+LockButton.Parent = ContentFrame
+
+-- Start/Stop button
+local ToggleButton = Instance.new("TextButton")
+ToggleButton.Size = UDim2.new(1, 0, 0, 40)
+ToggleButton.Position = UDim2.new(0, 0, 0, 330)
+ToggleButton.BackgroundColor3 = DISCORD_COLORS.AccentColor
+ToggleButton.Text = "Start Rotating"
+ToggleButton.TextColor3 = DISCORD_COLORS.TextColor
+ToggleButton.TextSize = 16
+ToggleButton.Font = Enum.Font.GothamBold
+ToggleButton.Parent = ContentFrame
+
+-- Delete GUI button
+local DeleteButton = Instance.new("TextButton")
+DeleteButton.Size = UDim2.new(1, 0, 0, 40)
+DeleteButton.Position = UDim2.new(0, 0, 0, 380)
+DeleteButton.BackgroundColor3 = DISCORD_COLORS.ErrorColor
+DeleteButton.Text = "Delete GUI"
+DeleteButton.TextColor3 = DISCORD_COLORS.TextColor
+DeleteButton.TextSize = 16
+DeleteButton.Font = Enum.Font.GothamBold
+DeleteButton.Parent = ContentFrame
+
+local NearestButton = Instance.new("TextButton")
+NearestButton.Size = UDim2.new(1, 0, 0, 30)
+NearestButton.Position = UDim2.new(0, 0, 0, 60)
+NearestButton.BackgroundColor3 = DISCORD_COLORS.AccentColor
+NearestButton.Text = "Select Nearest Player"
+NearestButton.TextColor3 = DISCORD_COLORS.TextColor
+NearestButton.TextSize = 14
+NearestButton.Font = Enum.Font.GothamBold
+NearestButton.Parent = ContentFrame
+
+-- Adjust positions of other elements
+ModeLabel.Position = UDim2.new(0, 0, 0, 105)
+ModeDropdown.Position = UDim2.new(0, 0, 0, 130)
+OffsetLabel.Position = UDim2.new(0, 0, 0, 175)
+OffsetFrame.Position = UDim2.new(0, 0, 0, 200)
+SpeedLabel.Position = UDim2.new(0, 0, 0, 245)
+SpeedFrame.Position = UDim2.new(0, 0, 0, 270)
+LockButton.Position = UDim2.new(0, 0, 0, 315)
+ToggleButton.Position = UDim2.new(0, 0, 0, 365)
+DeleteButton.Position = UDim2.new(0, 0, 0, 415)
+
+local function updateLockViewLine()
+    
+end
+
+
+local function findNearestPlayer()
+    local localPlayer = Players.LocalPlayer
+    local localCharacter = localPlayer.Character
+    if not localCharacter then return end
+    
+    local localRoot = localCharacter:FindFirstChild("HumanoidRootPart")
+    if not localRoot then return end
+    
+    local nearestPlayer = nil
+    local nearestDistance = math.huge
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        -- Пропускаем локального игрока и игнорируемых
+        if player ~= localPlayer and not ignoredPlayers[player] then
+            local character = player.Character
+            if character then
+                local root = character:FindFirstChild("HumanoidRootPart")
+                if root then
+                    local distance = (root.Position - localRoot.Position).Magnitude
+                    if distance < nearestDistance then
+                        nearestDistance = distance
+                        nearestPlayer = player
+                    end
+                end
+            end
+        end
+    end
+    
+    if nearestPlayer then
+        selectedPlayer = nearestPlayer
+        PlayerDropdown.Text = nearestPlayer.Name
+    end
+end
+
+-- Кнопка игнорирования выбранного игрока
+local IgnoreButton = Instance.new("TextButton")
+IgnoreButton.Size = UDim2.new(1, 0, 0, 30)
+IgnoreButton.Position = UDim2.new(0, 0, 0, 470)
+IgnoreButton.BackgroundColor3 = DISCORD_COLORS.SecondaryBg
+IgnoreButton.Text = "Ignore Selected Player"
+IgnoreButton.TextColor3 = DISCORD_COLORS.ErrorColor
+IgnoreButton.TextSize = 14
+IgnoreButton.Font = Enum.Font.GothamBold
+IgnoreButton.Parent = ContentFrame
+
+-- Кнопка сброса всех игноров
+local UnignoreAllButton = Instance.new("TextButton")
+UnignoreAllButton.Size = UDim2.new(1, 0, 0, 30)
+UnignoreAllButton.Position = UDim2.new(0, 0, 0, 525)
+UnignoreAllButton.BackgroundColor3 = DISCORD_COLORS.SecondaryBg
+UnignoreAllButton.Text = "Unignore All Players"
+UnignoreAllButton.TextColor3 = DISCORD_COLORS.SuccessColor
+UnignoreAllButton.TextSize = 14
+UnignoreAllButton.Font = Enum.Font.GothamBold
+UnignoreAllButton.Parent = ContentFrame
+
+
+-- При клике на кнопку игнорирования
+IgnoreButton.MouseButton1Click:Connect(function()
+    if selectedPlayer then
+        ignoredPlayers[selectedPlayer] = true
+        PlayerDropdown.Text = "Select Player"
+        selectedPlayer = nil
+        updatePlayerList() -- Обновляем список игроков
+    end
+end)
+
+-- При клике на кнопку сброса игноров
+UnignoreAllButton.MouseButton1Click:Connect(function()
+    ignoredPlayers = {} -- Очищаем таблицу игноров
+    updatePlayerList() -- Обновляем список игроков
+end)
+
+
+
+NearestButton.MouseButton1Click:Connect(findNearestPlayer)
+
+local function waveRotation(targetPosition)
+    rotationAngle = rotationAngle + math.rad(rotationSpeed)
+    return Vector3.new(
+        targetPosition.X + math.cos(rotationAngle) * rotationOffset,
+        targetPosition.Y + math.sin(rotationAngle * 2) * (rotationOffset / 2),
+        targetPosition.Z + math.sin(rotationAngle) * rotationOffset
+    )
+end
+
+local function squareRotation(targetPosition)
+    rotationAngle = rotationAngle + math.rad(rotationSpeed)
+    local angle = rotationAngle % (math.pi * 2)
+    local x, z = 0, 0
+    
+    if angle < math.pi/2 then
+        x = rotationOffset
+        z = angle/(math.pi/2) * rotationOffset
+    elseif angle < math.pi then
+        x = rotationOffset - (angle-math.pi/2)/(math.pi/2) * (rotationOffset*2)
+        z = rotationOffset
+    elseif angle < math.pi*3/2 then
+        x = -rotationOffset
+        z = rotationOffset - (angle-math.pi)/(math.pi/2) * (rotationOffset*2)
+    else
+        x = -rotationOffset + (angle-math.pi*3/2)/(math.pi/2) * (rotationOffset*2)
+        z = -rotationOffset
+    end
+    
+    return Vector3.new(
+        targetPosition.X + x,
+        targetPosition.Y,
+        targetPosition.Z + z
+    )
+end
+
+local function triangleRotation(targetPosition)
+    rotationAngle = rotationAngle + math.rad(rotationSpeed)
+    local angle = rotationAngle % (math.pi * 2)
+    local section = math.floor(angle / (math.pi * 2/3))
+    local sectionAngle = angle - section * (math.pi * 2/3)
+    local progress = sectionAngle / (math.pi * 2/3)
+    
+    local points = {
+        Vector3.new(rotationOffset, 0, 0),
+        Vector3.new(-rotationOffset/2, 0, rotationOffset),
+        Vector3.new(-rotationOffset/2, 0, -rotationOffset)
+    }
+    
+    local current = points[section + 1]
+    local next = points[section + 2] or points[1]
+    
+    return Vector3.new(
+        targetPosition.X + current.X + (next.X - current.X) * progress,
+        targetPosition.Y,
+        targetPosition.Z + current.Z + (next.Z - current.Z) * progress
+    )
+end
+
+local function infinityRotation(targetPosition)
+    rotationAngle = rotationAngle + math.rad(rotationSpeed)
+    local t = rotationAngle
+    return Vector3.new(
+        targetPosition.X + math.sin(t) * rotationOffset / (1 + math.cos(t)^2),
+        targetPosition.Y,
+        targetPosition.Z + math.sin(t) * math.cos(t) * rotationOffset / (1 + math.cos(t)^2)
+    )
+end
+
+-- Rotation methods
+local function circleRotation(targetPosition)
+    rotationAngle = rotationAngle + math.rad(rotationSpeed)
+    return Vector3.new(
+        targetPosition.X + math.cos(rotationAngle) * rotationOffset,
+        targetPosition.Y,
+        targetPosition.Z + math.sin(rotationAngle) * rotationOffset
+    )
+end
+
+local function spiralRotation(targetPosition)
+    rotationAngle = rotationAngle + math.rad(rotationSpeed)
+    spiralHeight = spiralHeight + 0.1
+    if spiralHeight > 10 then spiralHeight = 0 end
+    return Vector3.new(
+        targetPosition.X + math.cos(rotationAngle) * rotationOffset,
+        targetPosition.Y + spiralHeight,
+        targetPosition.Z + math.sin(rotationAngle) * rotationOffset
+    )
+end
+
+local function figure8Rotation(targetPosition)
+    rotationAngle = rotationAngle + math.rad(rotationSpeed)
+    return Vector3.new(
+        targetPosition.X + math.cos(rotationAngle) * rotationOffset,
+        targetPosition.Y,
+        targetPosition.Z + math.sin(2 * rotationAngle) * rotationOffset / 2
+    )
+end
+
+local function randomRotation(targetPosition)
+    rotationAngle = rotationAngle + math.rad(rotationSpeed + math.random(-2, 2))
+    return Vector3.new(
+        targetPosition.X + math.cos(rotationAngle) * (rotationOffset + math.random(-2, 2)),
+        targetPosition.Y + math.random(-1, 1),
+        targetPosition.Z + math.sin(rotationAngle) * (rotationOffset + math.random(-2, 2))
+    )
+end
+
+local function zigzagRotation(targetPosition)
+    rotationAngle = rotationAngle + math.rad(rotationSpeed)
+    local zigzag = math.sin(rotationAngle * 2) * 3
+    return Vector3.new(
+        targetPosition.X + math.cos(rotationAngle) * rotationOffset + zigzag,
+        targetPosition.Y,
+        targetPosition.Z + math.sin(rotationAngle) * rotationOffset + zigzag
+    )
+end
+
+-- Function to update player list
+local function updatePlayerList()
+    local playerList = Players:GetPlayers()
+    local dropdownMenu = Instance.new("Frame")
+    dropdownMenu.Name = "DropdownMenu"
+    dropdownMenu.Size = UDim2.new(1, 0, 0, #playerList * 30)
+    dropdownMenu.Position = UDim2.new(0, 0, 1, 0)
+    dropdownMenu.BackgroundColor3 = DISCORD_COLORS.SecondaryBg
+    dropdownMenu.Visible = false
+    dropdownMenu.ZIndex = 10
+    dropdownMenu.Parent = PlayerDropdown
+
+    for i, player in ipairs(playerList) do
+        if player ~= Players.LocalPlayer and not ignoredPlayers[player] then
+            local playerButton = Instance.new("TextButton")
+            playerButton.Size = UDim2.new(1, 0, 0, 30)
+            playerButton.Position = UDim2.new(0, 0, 0, (i-1) * 30)
+            playerButton.BackgroundColor3 = DISCORD_COLORS.SecondaryBg
+            playerButton.Text = player.Name
+            playerButton.TextColor3 = DISCORD_COLORS.TextColor
+            playerButton.TextSize = 14
+            playerButton.Font = Enum.Font.Gotham
+            playerButton.Parent = dropdownMenu
+            playerButton.ZIndex = 10
+
+            playerButton.MouseButton1Click:Connect(function()
+                selectedPlayer = player
+                PlayerDropdown.Text = player.Name
+                dropdownMenu.Visible = false
+            end)
+        end
+    end
+
+    PlayerDropdown.MouseButton1Click:Connect(function()
+        dropdownMenu.Visible = not dropdownMenu.Visible
+    end)
+end
+
+-- Update rotation mode list
+local function updateModeList()
+    local modeMenu = Instance.new("Frame")
+    modeMenu.Name = "ModeMenu"
+    modeMenu.Size = UDim2.new(1, 0, 0, #ROTATION_MODES * 30)
+    modeMenu.Position = UDim2.new(0, 0, 1, 0)
+    modeMenu.BackgroundColor3 = DISCORD_COLORS.SecondaryBg
+    modeMenu.Visible = false
+    modeMenu.ZIndex = 10
+    modeMenu.Parent = ModeDropdown
+
+    for i, mode in ipairs(ROTATION_MODES) do
+        local modeButton = Instance.new("TextButton")
+        modeButton.Size = UDim2.new(1, 0, 0, 30)
+        modeButton.Position = UDim2.new(0, 0, 0, (i-1) * 30)
+        modeButton.BackgroundColor3 = DISCORD_COLORS.SecondaryBg
+        modeButton.Text = mode
+        modeButton.TextColor3 = DISCORD_COLORS.TextColor
+        modeButton.TextSize = 14
+        modeButton.Font = Enum.Font.Gotham
+        modeButton.Parent = modeMenu
+        modeButton.ZIndex = 10
+
+        modeButton.MouseButton1Click:Connect(function()
+            currentMode = mode
+            ModeDropdown.Text = mode
+            modeMenu.Visible = false
+        end)
+    end
+
+    ModeDropdown.MouseButton1Click:Connect(function()
+        modeMenu.Visible = not modeMenu.Visible
+    end)
+end
+
+-- Function to perform rotation
+local function performRotation()
+    if not selectedPlayer then return end
+    
+    local targetPlayer = Players:FindFirstChild(selectedPlayer.Name)
+    if not targetPlayer then return end
+    
+    local targetCharacter = targetPlayer.Character
+    local localCharacter = Players.LocalPlayer.Character
+    if not targetCharacter or not localCharacter then return end
+    
+    local targetRoot = targetCharacter:FindFirstChild("HumanoidRootPart")
+    local localRoot = localCharacter:FindFirstChild("HumanoidRootPart")
+    if not targetRoot or not localRoot then return end
+    
+    local targetPosition = targetRoot.Position
+    
+    local newPosition
+    if currentMode == "Circle" then
+        newPosition = circleRotation(targetPosition)
+    elseif currentMode == "Spiral" then
+        newPosition = spiralRotation(targetPosition)
+    elseif currentMode == "Figure 8" then
+        newPosition = figure8Rotation(targetPosition)
+    elseif currentMode == "Random" then
+        newPosition = randomRotation(targetPosition)
+    elseif currentMode == "Zigzag" then
+        newPosition = zigzagRotation(targetPosition)
+    elseif currentMode == "Wave" then
+        newPosition = waveRotation(targetPosition)
+    elseif currentMode == "Square" then
+        newPosition = squareRotation(targetPosition)
+    elseif currentMode == "Triangle" then
+        newPosition = triangleRotation(targetPosition)
+    elseif currentMode == "Infinity" then
+        newPosition = infinityRotation(targetPosition)
+    end
+    
+    if newPosition then
+        localRoot.CFrame = CFrame.new(newPosition, targetPosition)
+    end
+end
+
+-- Function to toggle rotation
+local function toggleRotation()
+    isRotating = not isRotating
+    ToggleButton.Text = isRotating and "Stop Rotating" or "Start Rotating"
+    ToggleButton.BackgroundColor3 = isRotating and DISCORD_COLORS.ErrorColor or DISCORD_COLORS.AccentColor
+    
+    if isRotating then
+        spawn(function()
+            -- Используем RenderStepped для максимально быстрого обновления
+            local renderStepped = game:GetService("RunService").RenderStepped
+            while isRotating and ScreenGui.Parent ~= nil do
+                if selectedPlayer then
+                    performRotation()
+                end
+                renderStepped:Wait()
+            end
+        end)
+    end
+end
+
+local Line = Instance.new("Part")
+Line.Size = Vector3.new(0.1, 0.1, 0.1) -- Small part to draw a line
+Line.Anchored = true
+Line.CanCollide = false
+Line.Transparency = 0.5
+Line.BrickColor = BrickColor.new("Bright red") -- You can choose your preferred color
+Line.Parent = game.Workspace
+
+-- Update the line every frame while the view is locked
+game:GetService("RunService").RenderStepped:Connect(updateLockViewLine)
+
+-- Function to toggle player lock
+local function toggleLock()
+    isLocked = not isLocked
+    LockButton.Text = isLocked and "Unlock View" or "Lock View"
+    LockButton.BackgroundColor3 = isLocked and DISCORD_COLORS.SuccessColor or DISCORD_COLORS.SecondaryBg
+    
+    if isLocked then
+        spawn(function()
+            while isLocked and ScreenGui.Parent ~= nil do
+                if selectedPlayer then
+                    -- Handle player leaving
+                    if not Players:FindFirstChild(selectedPlayer.Name) then
+                        local player = Players:GetPlayerByUserId(selectedPlayer.UserId)
+                        if player then
+                            selectedPlayer = player
+                        end
+                    end
+                    
+                    local targetCharacter = selectedPlayer.Character
+                    local localCharacter = Players.LocalPlayer.Character
+                    
+                    if targetCharacter and localCharacter then
+                        local targetRoot = targetCharacter:FindFirstChild("HumanoidRootPart")
+                        local localRoot = localCharacter:FindFirstChild("HumanoidRootPart")
+                        
+                        if targetRoot and localRoot then
+                            local targetPosition = targetRoot.Position
+                            local characterPosition = localRoot.Position
+                            -- Directly set CFrame for instant movement
+                            localRoot.CFrame = CFrame.new(characterPosition, targetPosition)
+                        end
+                    end
+                end
+                -- Remove RunService.Heartbeat:Wait() for faster updates
+                game:GetService("RunService").RenderStepped:Wait()
+            end
+        end)
+    else
+        -- Destroy the line when Lock View is toggled off
+        if Line.Parent then
+            Line:Destroy()
+        end
+    end
+end
+
+local function findNearestPlayer()
+    local localPlayer = Players.LocalPlayer
+    local localCharacter = localPlayer.Character
+    if not localCharacter then return end
+    
+    local localRoot = localCharacter:FindFirstChild("HumanoidRootPart")
+    if not localRoot then return end
+    
+    local nearestPlayer = nil
+    local nearestDistance = math.huge
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= localPlayer then
+            local character = player.Character
+            if character then
+                local root = character:FindFirstChild("HumanoidRootPart")
+                if root then
+                    local distance = (root.Position - localRoot.Position).Magnitude
+                    if distance < nearestDistance then
+                        nearestDistance = distance
+                        nearestPlayer = player
+                    end
+                end
+            end
+        end
+    end
+    
+    if nearestPlayer then
+        selectedPlayer = nearestPlayer
+        PlayerDropdown.Text = nearestPlayer.Name
+    end
+end
+
+-- Function to update auto nearest player
+local function updateAutoNearest()
+    while autoNearestEnabled and ScreenGui.Parent ~= nil do
+        findNearestPlayer()
+        wait(0.5)  -- Update every half second
+    end
+end
+
+-- Auto Nearest Button Click Handler
+AutoNearestButton.MouseButton1Click:Connect(function()
+    autoNearestEnabled = not autoNearestEnabled
+    AutoNearestButton.Text = "Auto Nearest: " .. (autoNearestEnabled and "ON" or "OFF")
+    AutoNearestButton.BackgroundColor3 = autoNearestEnabled and DISCORD_COLORS.SuccessColor or DISCORD_COLORS.SecondaryBg
+    
+    if autoNearestEnabled then
+        spawn(updateAutoNearest)
+    end
+end)
+
+NearestButton.MouseButton1Click:Connect(findNearestPlayer)
+
+-- Connect button events
+ToggleButton.MouseButton1Click:Connect(toggleRotation)
+LockButton.MouseButton1Click:Connect(toggleLock)
+DeleteButton.MouseButton1Click:Connect(function()
+    isRotating = false
+    isLocked = false
+    ScreenGui:Destroy()
+end)
+
+-- Toggle GUI visibility with Insert key
+UserInputService.InputBegan:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.Insert then
+        guiVisible = not guiVisible
+        MainFrame.Visible = guiVisible
+    end
+end)
+
+-- Update offset and speed values
+OffsetValue.FocusLost:Connect(function()
+    local newValue = tonumber(OffsetValue.Text)
+    if newValue then
+        rotationOffset = math.clamp(newValue, 1, 100)
+        OffsetValue.Text = tostring(rotationOffset)
+    else
+        OffsetValue.Text = tostring(rotationOffset)
+    end
+end)
+
+SpeedValue.FocusLost:Connect(function()
+    local newValue = tonumber(SpeedValue.Text)
+    if newValue then
+        rotationSpeed = math.max(0.1, newValue)  -- Only keep the minimum limit
+        SpeedValue.Text = tostring(rotationSpeed)
+    else
+        SpeedValue.Text = tostring(rotationSpeed)
+    end
+end)
+
+local function removePlayerFromDropdown(player)
+    local dropdownMenu = PlayerDropdown:FindFirstChild("DropdownMenu")
+    if dropdownMenu then
+        local playerButton = dropdownMenu:FindFirstChild(player.Name)
+        if playerButton then
+            playerButton:Destroy()
+            -- Adjust size of dropdown menu
+            dropdownMenu.Size = UDim2.new(1, 0, 0, #dropdownMenu:GetChildren() * 30)
+            -- Update positions of remaining buttons
+            local yOffset = 0
+            for _, button in pairs(dropdownMenu:GetChildren()) do
+                if button:IsA("TextButton") then
+                    button.Position = UDim2.new(0, 0, 0, yOffset)
+                    yOffset = yOffset + 30
+                end
+            end
+        end
+    end
+end
+
+-- Function to add player to dropdown
+local function addPlayerToDropdown(player)
+    if player == Players.LocalPlayer then return end
+    
+    local dropdownMenu = PlayerDropdown:FindFirstChild("DropdownMenu")
+    if dropdownMenu then
+        -- Check if player button already exists
+        if dropdownMenu:FindFirstChild(player.Name) then return end
+        
+        local playerButton = Instance.new("TextButton")
+        playerButton.Name = player.Name
+        playerButton.Size = UDim2.new(1, 0, 0, 30)
+        playerButton.BackgroundColor3 = DISCORD_COLORS.SecondaryBg
+        playerButton.Text = player.Name
+        playerButton.TextColor3 = DISCORD_COLORS.TextColor
+        playerButton.TextSize = 14
+        playerButton.Font = Enum.Font.Gotham
+        playerButton.ZIndex = 10
+        
+        -- Update position
+        local numChildren = #dropdownMenu:GetChildren()
+        playerButton.Position = UDim2.new(0, 0, 0, numChildren * 30)
+        playerButton.Parent = dropdownMenu
+        
+        -- Update dropdown menu size
+        dropdownMenu.Size = UDim2.new(1, 0, 0, (numChildren + 1) * 30)
+        
+        playerButton.MouseButton1Click:Connect(function()
+            selectedPlayer = player
+            PlayerDropdown.Text = player.Name
+            dropdownMenu.Visible = false
+        end)
+    end
+end
+
+-- Connect PlayerAdded and PlayerRemoving events
+Players.PlayerAdded:Connect(function(player)
+    addPlayerToDropdown(player)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+    removePlayerFromDropdown(player)
+    -- If the removed player was selected, reset selection
+    if selectedPlayer and selectedPlayer.Name == player.Name then
+        selectedPlayer = nil
+        PlayerDropdown.Text = "Select Player"
+    end
+end)
+
+-- Enable dragging
+enableDragging(MainFrame)
+
+-- Initialize
+updatePlayerList()
+updateModeList()
+ScreenGui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local player = Players.LocalPlayer
+local healthEnabled = false
+
+-- Create GUI
+local gui = Instance.new("ScreenGui")
+gui.Name = "HealthMenu"
+gui.ResetOnSpawn = false
+gui.Parent = player.PlayerGui
+
+-- Main Frame with gradient
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 250, 0, 150)
+mainFrame.Position = UDim2.new(0.5, -125, 0.5, -75)
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = gui
+
+-- Gradient background
+local gradient = Instance.new("UIGradient")
+gradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(45, 45, 65)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(35, 35, 50))
+})
+gradient.Rotation = 45
+gradient.Parent = mainFrame
+
+-- Make corners rounded
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 12)
+corner.Parent = mainFrame
+
+-- Mobile Toggle Button
+local mobileToggle = Instance.new("ImageButton")
+mobileToggle.Name = "MobileToggle"
+mobileToggle.Size = UDim2.new(0, 50, 0, 50)
+mobileToggle.Position = UDim2.new(0.05, 0, 0.8, 0)
+mobileToggle.BackgroundColor3 = Color3.fromRGB(45, 45, 65)
+mobileToggle.Image = "rbxassetid://7059346373" -- Menu icon
+mobileToggle.ImageColor3 = Color3.fromRGB(255, 255, 255)
+mobileToggle.Parent = gui
+
+-- Make mobile toggle button round
+local mobileToggleCorner = Instance.new("UICorner")
+mobileToggleCorner.CornerRadius = UDim.new(1, 0)
+mobileToggleCorner.Parent = mobileToggle
+
+-- Add shadow to mobile toggle
+local mobileToggleShadow = Instance.new("ImageLabel")
+mobileToggleShadow.Name = "Shadow"
+mobileToggleShadow.AnchorPoint = Vector2.new(0.5, 0.5)
+mobileToggleShadow.BackgroundTransparency = 1
+mobileToggleShadow.Position = UDim2.new(0.5, 0, 0.5, 0)
+mobileToggleShadow.Size = UDim2.new(1, 10, 1, 10)
+mobileToggleShadow.ZIndex = -1
+mobileToggleShadow.Image = "rbxassetid://7912134082"
+mobileToggleShadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+mobileToggleShadow.ImageTransparency = 0.6
+mobileToggleShadow.Parent = mobileToggle
+
+-- Add shadow
+local shadow = Instance.new("ImageLabel")
+shadow.Name = "Shadow"
+shadow.AnchorPoint = Vector2.new(0.5, 0.5)
+shadow.BackgroundTransparency = 1
+shadow.Position = UDim2.new(0.5, 0, 0.5, 0)
+shadow.Size = UDim2.new(1, 30, 1, 30)
+shadow.ZIndex = -1
+shadow.Image = "rbxassetid://7912134082"
+shadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+shadow.ImageTransparency = 0.6
+shadow.Parent = mainFrame
+
+-- Title with animation
+local title = Instance.new("TextLabel")
+title.Name = "Title"
+title.Size = UDim2.new(1, -20, 0, 30)
+title.Position = UDim2.new(0, 10, 0, 10)
+title.BackgroundTransparency = 1
+title.Text = "Stealer health % $HD"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextSize = 20
+title.Font = Enum.Font.GothamBold
+title.Parent = mainFrame
+
+-- Subtitle with typing animation
+local subtitle = Instance.new("TextLabel")
+subtitle.Name = "Subtitle"
+subtitle.Size = UDim2.new(1, -20, 0, 20)
+subtitle.Position = UDim2.new(0, 10, 0, 35)
+subtitle.BackgroundTransparency = 1
+subtitle.Text = ""
+subtitle.TextColor3 = Color3.fromRGB(200, 200, 200)
+subtitle.TextSize = 14
+subtitle.Font = Enum.Font.GothamSemibold
+subtitle.Parent = mainFrame
+
+-- Health Display with style
+local healthLabel = Instance.new("TextLabel")
+healthLabel.Name = "HealthLabel"
+healthLabel.Size = UDim2.new(1, -20, 0, 30)
+healthLabel.Position = UDim2.new(0, 10, 0, 60)
+healthLabel.BackgroundTransparency = 1
+healthLabel.Text = "Health: 100%"
+healthLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+healthLabel.TextSize = 18
+healthLabel.Font = Enum.Font.GothamSemibold
+healthLabel.Parent = mainFrame
+
+-- Stylish Toggle Button
+local toggleButton = Instance.new("TextButton")
+toggleButton.Name = "ToggleButton"
+toggleButton.Size = UDim2.new(0.8, 0, 0, 30)
+toggleButton.Position = UDim2.new(0.1, 0, 0.7, 0)
+toggleButton.BackgroundColor3 = Color3.fromRGB(65, 165, 65)
+toggleButton.Text = "Enable Health Check"
+toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleButton.Font = Enum.Font.GothamSemibold
+toggleButton.TextSize = 14
+toggleButton.AutoButtonColor = false
+toggleButton.Parent = mainFrame
+
+local buttonCorner = Instance.new("UICorner")
+buttonCorner.CornerRadius = UDim.new(0, 8)
+buttonCorner.Parent = toggleButton
+
+-- Modern Close Button
+local closeButton = Instance.new("TextButton")
+closeButton.Name = "CloseButton"
+closeButton.Size = UDim2.new(0, 24, 0, 24)
+closeButton.Position = UDim2.new(1, -30, 0, 6)
+closeButton.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+closeButton.Text = "×"
+closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeButton.Font = Enum.Font.GothamBold
+closeButton.TextSize = 20
+closeButton.Parent = mainFrame
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 6)
+closeCorner.Parent = closeButton
+
+local function enableDragging(frame)
+    local dragging = false
+    local dragStart = nil
+    local startPos = nil
+    
+    local function updateDrag(input)
+        if dragging then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end
+    
+    frame.InputBegan:Connect(function(input)
+        if (input.UserInputType == Enum.UserInputType.MouseButton1 or
+            input.UserInputType == Enum.UserInputType.Touch) then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if (input.UserInputType == Enum.UserInputType.MouseMovement or
+            input.UserInputType == Enum.UserInputType.Touch) then
+            updateDrag(input)
+        end
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if (input.UserInputType == Enum.UserInputType.MouseButton1 or
+            input.UserInputType == Enum.UserInputType.Touch) then
+            dragging = false
+        end
+    end)
+end
+
+-- Apply dragging to mainFrame
+enableDragging(mainFrame)
+
+-- Mobile toggle button functionality
+mobileToggle.TouchTap:Connect(function()
+    gui.MainFrame.Visible = not gui.MainFrame.Visible
+    
+    -- Animate the toggle button
+    TweenService:Create(mobileToggle, TweenInfo.new(0.3), {
+        Rotation = mobileToggle.Rotation + 180
+    }):Play()
+end)
+
+-- Check if device is mobile
+local isMobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+
+-- Show/hide appropriate controls based on device
+mobileToggle.Visible = isMobile
+if isMobile then
+    -- Hide the original GUI initially on mobile
+    mainFrame.Visible = false
+else
+    -- Hide mobile toggle on desktop
+    mobileToggle.Visible = false
+    mainFrame.Visible = true
+end
+
+
+-- Typing animation function
+local function typeText(text)
+    local fullText = " by ilyatracher"
+    local currentText = ""
+    
+    -- Type text
+    for i = 1, #fullText do
+        currentText = fullText:sub(1, i)
+        subtitle.Text = currentText
+        wait(0.05)
+    end
+    
+    wait(1)
+    
+    -- Erase text
+    for i = #fullText, 1, -1 do
+        currentText = fullText:sub(1, i)
+        subtitle.Text = currentText
+        wait(0.03)
+    end
+    
+    wait(0.5)
+    typeText() -- Restart animation
+end
+
+-- Button hover effects
+local function createButtonEffect(button)
+    local originalColor = button.BackgroundColor3
+    
+    button.MouseEnter:Connect(function()
+        TweenService:Create(button, TweenInfo.new(0.3), {
+            BackgroundColor3 = button.BackgroundColor3:Lerp(Color3.new(1, 1, 1), 0.2)
+        }):Play()
+    end)
+    
+    button.MouseLeave:Connect(function()
+        TweenService:Create(button, TweenInfo.new(0.3), {
+            BackgroundColor3 = originalColor
+        }):Play()
+    end)
+end
+
+local function addRainbowEffect(textLabel)
+    local hue = 0
+    
+    game:GetService("RunService").Heartbeat:Connect(function()
+        hue = (hue + 1) % 360
+        textLabel.TextColor3 = Color3.fromHSV(hue/360, 1, 1)
+    end)
+end
+
+
+
+createButtonEffect(toggleButton)
+createButtonEffect(closeButton)
+addRainbowEffect(title)
+
+-- Start typing animation
+coroutine.wrap(typeText)()
+
+-- [Rest of the previous code for dragging and functionality remains the same]
+
+
+-- Make GUI draggable
+local dragging = false
+local dragStart = nil
+local startPos = nil
+
+mainFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = mainFrame.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
+        mainFrame.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = false
+    end
+end)
+
+-- Health check function
+local function onCharacterAdded(character)
+    local humanoid = character:WaitForChild("Humanoid")
+    
+    local function checkHealth()
+        if healthEnabled and humanoid.Health < (humanoid.MaxHealth * 0.25) then
+            humanoid.Health = 0
+        end
+        local healthPercent = math.floor((humanoid.Health / humanoid.MaxHealth) * 100)
+        healthLabel.Text = "Health: " .. healthPercent .. "%"
+    end
+    
+    humanoid.HealthChanged:Connect(checkHealth)
+    checkHealth()
+end
+
+-- Toggle functionality
+toggleButton.MouseButton1Click:Connect(function()
+    healthEnabled = not healthEnabled
+    toggleButton.BackgroundColor3 = healthEnabled and 
+        Color3.fromRGB(165, 65, 65) or 
+        Color3.fromRGB(65, 165, 65)
+    toggleButton.Text = healthEnabled and 
+        "Disable Health Check" or 
+        "Enable Health Check"
+end)
+
+-- Close button functionality
+closeButton.MouseButton1Click:Connect(function()
+    gui:Destroy()
+end)
+
+-- Toggle GUI visibility with Insert key
+UserInputService.InputBegan:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.Insert then
+        gui.Enabled = not gui.Enabled
+    end
+end)
+
+-- Initialize
+player.CharacterAdded:Connect(onCharacterAdded)
+if player.Character then
+    onCharacterAdded(player.Character)
+end
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+-- Secure variable naming with randomization
+local function generateRandomName()
+    local chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    local result = ""
+    for i = 1, math.random(5, 10) do
+        result = result .. string.sub(chars, math.random(1, #chars), math.random(1, #chars))
+    end
+    return result
+end
+
+-- Secure references
+local _vars = setmetatable({
+    player = Players.LocalPlayer,
+    workspace = workspace,
+    chars = "Characters",
+    net = "Network",
+    skill = "Skill",
+    req = "Request",
+    num = "Number"
+}, {
+    __index = function(t, k)
+        return rawget(t, k)
+    end
+})
+
+
+
+-- Create GUI
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = generateRandomName()
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = _vars.player.PlayerGui
+
+-- Main Frame
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = generateRandomName()
+MainFrame.Size = UDim2.new(0, 350, 0, 450)
+MainFrame.Position = UDim2.new(0.5, -125, 0.5, -150)
+MainFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+MainFrame.BorderSizePixel = 2
+MainFrame.BorderColor3 = Color3.fromRGB(255, 255, 255)
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+
+-- Title
+local Title = Instance.new("TextLabel")
+Title.Name = generateRandomName()
+Title.Size = UDim2.new(1, 0, 0, 30)
+Title.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 18
+Title.Text = "Auto Skill (Legends battleground) by ilyatracher"
+Title.Font = Enum.Font.SourceSansBold
+Title.Parent = MainFrame
+
+-- Skill Manager
+local SkillManager = {
+    active = {},
+    lastUse = {},
+    cooldowns = {},
+    config = {
+        delays = {
+            min = 0.8,
+            max = 2.1,
+            variation = 0.3
+        }
+    }
+}
+
+-- Secure skill function
+local function executeSkill(skillNumber)
+    local function getRandomDelay()
+        return SkillManager.config.delays.min + 
+               (SkillManager.config.delays.max - SkillManager.config.delays.min) * math.random() +
+               (math.random() * SkillManager.config.delays.variation * 2 - SkillManager.config.delays.variation)
+    end
+
+    spawn(function()
+        if not SkillManager.active[skillNumber] then return end
+        
+        local currentTime = tick()
+        local cooldown = SkillManager.cooldowns[skillNumber] or 0
+        
+        if currentTime < cooldown then return end
+        
+        -- Create secure args with additional validation
+        local args = {
+            [1] = {
+                [_vars.num] = tostring(skillNumber),
+                [_vars.req] = _vars.skill,
+                ["timestamp"] = currentTime -- Add timestamp for additional security
+            }
+        }
+
+        -- Validate character and network path
+        local success, result = pcall(function()
+            local character = _vars.player.Character
+            if not character then return false end
+            
+            local targetPath = character[_vars.net]
+            if not targetPath then return false end
+            
+            return targetPath
+        end)
+
+        if success and result then
+            -- Add random delay for human-like behavior
+            wait(0.05 + math.random() * 0.1)
+            
+            print("got executed")
+            pcall(function()
+                result:FireServer(unpack(args))
+                SkillManager.lastUse[skillNumber] = currentTime
+                SkillManager.cooldowns[skillNumber] = currentTime + getRandomDelay()
+            end)
+        else
+            warn("err: \n".."  "..tostring(success).."\n  "..tostring(result))
+        end
+    end)
+end
+
+-- Create skill button
+local function createSkillButton(skillNumber, yPos)
+    local Button = Instance.new("TextButton")
+    Button.Name = generateRandomName()
+    Button.Size = UDim2.new(0.9, 0, 0, 40)
+    Button.Position = UDim2.new(0.05, 0, 0, yPos)
+    Button.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+    Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Button.TextSize = 16
+    Button.Text = "Skill " .. skillNumber .. " (OFF)"
+    Button.Font = Enum.Font.SourceSans
+    Button.Parent = MainFrame
+
+    -- Add hover effect
+    local originalColor = Button.BackgroundColor3
+    Button.MouseEnter:Connect(function()
+        Button.BackgroundColor3 = Color3.fromRGB(65, 65, 65)
+    end)
+    Button.MouseLeave:Connect(function()
+        Button.BackgroundColor3 = SkillManager.active[skillNumber] 
+            and Color3.fromRGB(0, 170, 0) 
+            or originalColor
+    end)
+
+    -- Toggle functionality
+    Button.MouseButton1Click:Connect(function()
+        SkillManager.active[skillNumber] = not SkillManager.active[skillNumber]
+        Button.Text = "Skill " .. skillNumber .. 
+                     (SkillManager.active[skillNumber] and " (ON)" or " (OFF)")
+        Button.BackgroundColor3 = SkillManager.active[skillNumber] 
+            and Color3.fromRGB(0, 170, 0) 
+            or originalColor
+
+        if SkillManager.active[skillNumber] then
+            spawn(function()
+                while SkillManager.active[skillNumber] and Button and Button.Parent do
+                    executeSkill(skillNumber)
+                    wait(0.1 + math.random() * 0.2)
+                end
+            end)
+        end
+    end)
+end
+
+-- Create speed slider
+local function createSpeedSlider(yPos)
+    local SliderFrame = Instance.new("Frame")
+    SliderFrame.Name = generateRandomName()
+    SliderFrame.Size = UDim2.new(0.9, 0, 0, 40)
+    SliderFrame.Position = UDim2.new(0.05, 0, 0, yPos)
+    SliderFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    SliderFrame.Parent = MainFrame
+
+    local SliderLabel = Instance.new("TextLabel")
+    SliderLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    SliderLabel.BackgroundTransparency = 1
+    SliderLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    SliderLabel.TextSize = 14
+    SliderLabel.Text = "Speed: Normal"
+    SliderLabel.Parent = SliderFrame
+
+    local SliderButton = Instance.new("TextButton")
+    SliderButton.Size = UDim2.new(1, 0, 0.5, 0)
+    SliderButton.Position = UDim2.new(0, 0, 0.5, 0)
+    SliderButton.BackgroundColor3 = Color3.fromRGB(65, 65, 65)
+    SliderButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    SliderButton.TextSize = 14
+    SliderButton.Text = "Change Speed"
+    SliderButton.Parent = SliderFrame
+
+    local speeds = {"Slow", "Normal", "Fast"}
+    local currentSpeed = 2
+    
+    SliderButton.MouseButton1Click:Connect(function()
+        currentSpeed = (currentSpeed % #speeds) + 1
+        SliderLabel.Text = "Speed: " .. speeds[currentSpeed]
+        
+        -- Update delays based on speed
+        if speeds[currentSpeed] == "Slow" then
+            SkillManager.config.delays.min = 1.2
+            SkillManager.config.delays.max = 2.5
+        elseif speeds[currentSpeed] == "Normal" then
+            SkillManager.config.delays.min = 0.8
+            SkillManager.config.delays.max = 2.1
+        else -- Fast
+            SkillManager.config.delays.min = 0.5
+            SkillManager.config.delays.max = 1.5
+        end
+    end)
+end
+
+-- Create buttons for skills
+for i = 1, 4 do
+    createSkillButton(i, 40 + (i - 1) * 50)
+end
+
+-- Create speed slider
+createSpeedSlider(250)
+
+-- Hotkeys
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed then
+        if input.KeyCode == Enum.KeyCode.Insert then
+            ScreenGui.Enabled = not ScreenGui.Enabled
+        elseif input.KeyCode == Enum.KeyCode.Delete then
+            ScreenGui:Destroy()
+        end
+    end
+end)
+
+-- Additional protection
+RunService.Heartbeat:Connect(function()
+    if math.random() > 0.99 then
+        -- Validate connections
+        for skillNumber, active in pairs(SkillManager.active) do
+            if active and not _vars.player.Character then
+                SkillManager.active[skillNumber] = false
+            end
+        end
+    end
+end)
+
+local function createAutoFrontButton(xPos, yPos)
+    local Button = Instance.new("TextButton")
+    Button.Name = generateRandomName()
+    Button.Size = UDim2.new(0.4, 0, 0, 40) -- Reduced width to 40%
+    Button.Position = UDim2.new(xPos, 0, 0, yPos)
+    Button.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+    Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Button.TextSize = 16
+    Button.Text = "Auto Front (OFF)"
+    Button.Font = Enum.Font.SourceSans
+    Button.Parent = MainFrame
+
+    -- Add hover effect
+    local originalColor = Button.BackgroundColor3
+    Button.MouseEnter:Connect(function()
+        Button.BackgroundColor3 = Color3.fromRGB(65, 65, 65)
+    end)
+    Button.MouseLeave:Connect(function()
+        Button.BackgroundColor3 = SkillManager.active["front"] 
+            and Color3.fromRGB(0, 170, 0) 
+            or originalColor
+    end)
+
+    Button.MouseButton1Click:Connect(function()
+        SkillManager.active["front"] = not SkillManager.active["front"]
+        Button.Text = "Auto Front " .. (SkillManager.active["front"] and "(ON)" or "(OFF)")
+        Button.BackgroundColor3 = SkillManager.active["front"] 
+            and Color3.fromRGB(0, 170, 0) 
+            or originalColor
+
+        if SkillManager.active["front"] then
+            spawn(function()
+                while SkillManager.active["front"] and Button and Button.Parent do
+                    local args = {
+                        [1] = {
+                            Bool = false,
+                            Request = "FrontDash",
+                        },
+                    }
+                    
+                    pcall(function()
+                        if _vars.player.Character then
+                            _vars.workspace[_vars.chars][_vars.player.Name][_vars.net]:FireServer(unpack(args))
+                        end
+                    end)
+                    
+                    wait(0.1 + math.random() * 0.2)
+                end
+            end)
+        end
+    end)
+end
+
+createAutoFrontButton(0.55, 340)
+
+local function createAutoClickButton(xPos, yPos)
+    local Button = Instance.new("TextButton")
+    Button.Name = generateRandomName()
+    Button.Size = UDim2.new(0.4, 0, 0, 40) -- Same size as Auto Front button
+    Button.Position = UDim2.new(xPos, 0, 0, yPos)
+    Button.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+    Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Button.TextSize = 16
+    Button.Text = "Auto Click (OFF)"
+    Button.Font = Enum.Font.SourceSans
+    Button.Parent = MainFrame
+
+    -- Add hover effect
+    local originalColor = Button.BackgroundColor3
+    Button.MouseEnter:Connect(function()
+        Button.BackgroundColor3 = Color3.fromRGB(65, 65, 65)
+    end)
+    Button.MouseLeave:Connect(function()
+        Button.BackgroundColor3 = SkillManager.active["autoclick"] 
+            and Color3.fromRGB(0, 170, 0) 
+            or originalColor
+    end)
+
+    -- Auto Click functionality
+    Button.MouseButton1Click:Connect(function()
+        SkillManager.active["autoclick"] = not SkillManager.active["autoclick"]
+        Button.Text = "Auto Click " .. (SkillManager.active["autoclick"] and "(ON)" or "(OFF)")
+        Button.BackgroundColor3 = SkillManager.active["autoclick"] 
+            and Color3.fromRGB(0, 170, 0) 
+            or originalColor
+
+        if SkillManager.active["autoclick"] then
+            spawn(function()
+                while SkillManager.active["autoclick"] and Button and Button.Parent do
+                    -- Simulate left mouse click
+                    local args = {
+                        [1] = {
+                            ["Request"] = "Click"
+                        }
+                    }
+                    
+                    pcall(function()
+                        if _vars.player.Character then
+                            _vars.workspace[_vars.chars][_vars.player.Name][_vars.net]:FireServer(unpack(args))
+                        end
+                    end)
+                    
+                    -- Add random delay between clicks
+                    wait(0.1 + math.random() * 0.2)
+                end
+            end)
+        end
+    end)
+end
+
+local function createAutoClickButton(xPos, yPos)
+    local Button = Instance.new("TextButton")
+    Button.Name = generateRandomName()
+    Button.Size = UDim2.new(0.4, 0, 0, 40)
+    Button.Position = UDim2.new(xPos, 0, 0, yPos)
+    Button.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+    Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Button.TextSize = 16
+    Button.Text = "Auto M1 (C)"
+    Button.Font = Enum.Font.SourceSans
+    Button.Parent = MainFrame
+
+    -- Add hover effect
+    local originalColor = Button.BackgroundColor3
+    Button.MouseEnter:Connect(function()
+        Button.BackgroundColor3 = Color3.fromRGB(65, 65, 65)
+    end)
+    Button.MouseLeave:Connect(function()
+        Button.BackgroundColor3 = SkillManager.active["autom1"] 
+            and Color3.fromRGB(0, 170, 0) 
+            or originalColor
+    end)
+
+    Button.MouseButton1Click:Connect(function()
+        SkillManager.active["autom1"] = not SkillManager.active["autom1"]
+        Button.Text = "Auto M1 " .. (SkillManager.active["autom1"] and "(ON)" or "(OFF)")
+        Button.BackgroundColor3 = SkillManager.active["autom1"] 
+            and Color3.fromRGB(0, 170, 0) 
+            or originalColor
+
+        if SkillManager.active["autom1"] then
+            spawn(function()
+                while SkillManager.active["autom1"] and Button and Button.Parent do
+                    -- Your specific network call
+                    local args = {
+                        [1] = {
+                            Request = "M1Down",
+                        }
+                    }
+                    
+                    pcall(function()
+                        if game["Workspace"] and game["Workspace"]["VFX"] then
+                            game["Workspace"]["VFX"]["FlyingRocksStorage"][_vars.player.Name]["Network"]:FireServer(unpack(args))
+                        end
+                    end)
+                    
+                    -- Add random delay between actions
+                    wait(0.1 + math.random() * 0.2)
+                end
+            end)
+        end
+    end)
+end
+
+local UserInputService = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
+
+local autoClick = false -- Состояние автоклика
+local clickDelay = 0.1 -- Интервал между кликами (в секундах)
+
+-- Функция для показа уведомления
+local function showNotification(title, text, duration)
+	pcall(function()
+		StarterGui:SetCore("SendNotification", {
+			Title = title,
+			Text = text,
+			Duration = duration or 2
+		})
+	end)
+end
+
+-- Переключение автоклика по кнопке "C"
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if input.KeyCode == Enum.KeyCode.C then
+		autoClick = not autoClick
+		if autoClick then
+			showNotification("AutoClicker", "Включен", 2)
+		else
+			showNotification("AutoClicker", "Выключен", 2)
+		end
+	end
+end)
+
+-- Функция автоклика
+RunService.RenderStepped:Connect(function()
+	if autoClick then
+		VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+		VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+		task.wait(clickDelay)
+	end
+end)
+
+createAutoClickButton(0.05, 340)
+
+local function createDeleteButton(yPos)
+    local Button = Instance.new("TextButton")
+    Button.Name = generateRandomName()
+    Button.Size = UDim2.new(0.9, 0, 0, 40)
+    Button.Position = UDim2.new(0.05, 0, 0, yPos)
+    Button.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+    Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Button.TextSize = 16
+    Button.Text = "Delete GUI"
+    Button.Font = Enum.Font.SourceSansBold
+    Button.Parent = MainFrame
+
+    -- Hover effect
+    local originalColor = Button.BackgroundColor3
+    Button.MouseEnter:Connect(function()
+        Button.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+    end)
+    Button.MouseLeave:Connect(function()
+        Button.BackgroundColor3 = originalColor
+    end)
+
+    -- Delete action
+    Button.MouseButton1Click:Connect(function()
+        ScreenGui:Destroy()
+    end)
+end
+
+-- Add Delete Button under all other elements
+createDeleteButton(390)
