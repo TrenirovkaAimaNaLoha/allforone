@@ -1,1 +1,484 @@
-Print("yebok")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+-- Secure variable naming with randomization
+local function generateRandomName()
+    local chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    local result = ""
+    for i = 1, math.random(5, 10) do
+        result = result .. string.sub(chars, math.random(1, #chars), math.random(1, #chars))
+    end
+    return result
+end
+
+-- Secure references
+local _vars = setmetatable({
+    player = Players.LocalPlayer,
+    workspace = workspace,
+    chars = "Characters",
+    net = "Network",
+    skill = "Skill",
+    req = "Request",
+    num = "Number"
+}, {
+    __index = function(t, k)
+        return rawget(t, k)
+    end
+})
+
+
+
+-- Create GUI
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = generateRandomName()
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = _vars.player.PlayerGui
+
+-- Main Frame
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = generateRandomName()
+MainFrame.Size = UDim2.new(0, 350, 0, 450)
+MainFrame.Position = UDim2.new(0.5, -125, 0.5, -150)
+MainFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+MainFrame.BorderSizePixel = 2
+MainFrame.BorderColor3 = Color3.fromRGB(255, 255, 255)
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+
+-- Title
+local Title = Instance.new("TextLabel")
+Title.Name = generateRandomName()
+Title.Size = UDim2.new(1, 0, 0, 30)
+Title.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 18
+Title.Text = "Auto Skill (Legends battleground) by ilyatracher"
+Title.Font = Enum.Font.SourceSansBold
+Title.Parent = MainFrame
+
+-- Skill Manager
+local SkillManager = {
+    active = {},
+    lastUse = {},
+    cooldowns = {},
+    config = {
+        delays = {
+            min = 0.8,
+            max = 2.1,
+            variation = 0.3
+        }
+    }
+}
+
+-- Secure skill function
+local function executeSkill(skillNumber)
+    local function getRandomDelay()
+        return SkillManager.config.delays.min + 
+               (SkillManager.config.delays.max - SkillManager.config.delays.min) * math.random() +
+               (math.random() * SkillManager.config.delays.variation * 2 - SkillManager.config.delays.variation)
+    end
+
+    spawn(function()
+        if not SkillManager.active[skillNumber] then return end
+        
+        local currentTime = tick()
+        local cooldown = SkillManager.cooldowns[skillNumber] or 0
+        
+        if currentTime < cooldown then return end
+        
+        -- Create secure args with additional validation
+        local args = {
+            [1] = {
+                [_vars.num] = tostring(skillNumber),
+                [_vars.req] = _vars.skill,
+                ["timestamp"] = currentTime -- Add timestamp for additional security
+            }
+        }
+
+        -- Validate character and network path
+        local success, result = pcall(function()
+            local character = _vars.player.Character
+            if not character then return false end
+            
+            local targetPath = character[_vars.net]
+            if not targetPath then return false end
+            
+            return targetPath
+        end)
+
+        if success and result then
+            -- Add random delay for human-like behavior
+            wait(0.05 + math.random() * 0.1)
+            
+            print("got executed")
+            pcall(function()
+                result:FireServer(unpack(args))
+                SkillManager.lastUse[skillNumber] = currentTime
+                SkillManager.cooldowns[skillNumber] = currentTime + getRandomDelay()
+            end)
+        else
+            warn("err: \n".."  "..tostring(success).."\n  "..tostring(result))
+        end
+    end)
+end
+
+-- Create skill button
+local function createSkillButton(skillNumber, yPos)
+    local Button = Instance.new("TextButton")
+    Button.Name = generateRandomName()
+    Button.Size = UDim2.new(0.9, 0, 0, 40)
+    Button.Position = UDim2.new(0.05, 0, 0, yPos)
+    Button.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+    Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Button.TextSize = 16
+    Button.Text = "Skill " .. skillNumber .. " (OFF)"
+    Button.Font = Enum.Font.SourceSans
+    Button.Parent = MainFrame
+
+    -- Add hover effect
+    local originalColor = Button.BackgroundColor3
+    Button.MouseEnter:Connect(function()
+        Button.BackgroundColor3 = Color3.fromRGB(65, 65, 65)
+    end)
+    Button.MouseLeave:Connect(function()
+        Button.BackgroundColor3 = SkillManager.active[skillNumber] 
+            and Color3.fromRGB(0, 170, 0) 
+            or originalColor
+    end)
+
+    -- Toggle functionality
+    Button.MouseButton1Click:Connect(function()
+        SkillManager.active[skillNumber] = not SkillManager.active[skillNumber]
+        Button.Text = "Skill " .. skillNumber .. 
+                     (SkillManager.active[skillNumber] and " (ON)" or " (OFF)")
+        Button.BackgroundColor3 = SkillManager.active[skillNumber] 
+            and Color3.fromRGB(0, 170, 0) 
+            or originalColor
+
+        if SkillManager.active[skillNumber] then
+            spawn(function()
+                while SkillManager.active[skillNumber] and Button and Button.Parent do
+                    executeSkill(skillNumber)
+                    wait(0.1 + math.random() * 0.2)
+                end
+            end)
+        end
+    end)
+end
+
+-- Create speed slider
+local function createSpeedSlider(yPos)
+    local SliderFrame = Instance.new("Frame")
+    SliderFrame.Name = generateRandomName()
+    SliderFrame.Size = UDim2.new(0.9, 0, 0, 40)
+    SliderFrame.Position = UDim2.new(0.05, 0, 0, yPos)
+    SliderFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    SliderFrame.Parent = MainFrame
+
+    local SliderLabel = Instance.new("TextLabel")
+    SliderLabel.Size = UDim2.new(1, 0, 0.5, 0)
+    SliderLabel.BackgroundTransparency = 1
+    SliderLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    SliderLabel.TextSize = 14
+    SliderLabel.Text = "Speed: Normal"
+    SliderLabel.Parent = SliderFrame
+
+    local SliderButton = Instance.new("TextButton")
+    SliderButton.Size = UDim2.new(1, 0, 0.5, 0)
+    SliderButton.Position = UDim2.new(0, 0, 0.5, 0)
+    SliderButton.BackgroundColor3 = Color3.fromRGB(65, 65, 65)
+    SliderButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    SliderButton.TextSize = 14
+    SliderButton.Text = "Change Speed"
+    SliderButton.Parent = SliderFrame
+
+    local speeds = {"Slow", "Normal", "Fast"}
+    local currentSpeed = 2
+    
+    SliderButton.MouseButton1Click:Connect(function()
+        currentSpeed = (currentSpeed % #speeds) + 1
+        SliderLabel.Text = "Speed: " .. speeds[currentSpeed]
+        
+        -- Update delays based on speed
+        if speeds[currentSpeed] == "Slow" then
+            SkillManager.config.delays.min = 1.2
+            SkillManager.config.delays.max = 2.5
+        elseif speeds[currentSpeed] == "Normal" then
+            SkillManager.config.delays.min = 0.8
+            SkillManager.config.delays.max = 2.1
+        else -- Fast
+            SkillManager.config.delays.min = 0.5
+            SkillManager.config.delays.max = 1.5
+        end
+    end)
+end
+
+-- Create buttons for skills
+for i = 1, 4 do
+    createSkillButton(i, 40 + (i - 1) * 50)
+end
+
+-- Create speed slider
+createSpeedSlider(250)
+
+-- Hotkeys
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed then
+        if input.KeyCode == Enum.KeyCode.Insert then
+            ScreenGui.Enabled = not ScreenGui.Enabled
+        elseif input.KeyCode == Enum.KeyCode.Delete then
+            ScreenGui:Destroy()
+        end
+    end
+end)
+
+-- Additional protection
+RunService.Heartbeat:Connect(function()
+    if math.random() > 0.99 then
+        -- Validate connections
+        for skillNumber, active in pairs(SkillManager.active) do
+            if active and not _vars.player.Character then
+                SkillManager.active[skillNumber] = false
+            end
+        end
+    end
+end)
+
+local function createAutoFrontButton(xPos, yPos)
+    local Button = Instance.new("TextButton")
+    Button.Name = generateRandomName()
+    Button.Size = UDim2.new(0.4, 0, 0, 40) -- Reduced width to 40%
+    Button.Position = UDim2.new(xPos, 0, 0, yPos)
+    Button.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+    Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Button.TextSize = 16
+    Button.Text = "Auto Front (OFF)"
+    Button.Font = Enum.Font.SourceSans
+    Button.Parent = MainFrame
+
+    -- Add hover effect
+    local originalColor = Button.BackgroundColor3
+    Button.MouseEnter:Connect(function()
+        Button.BackgroundColor3 = Color3.fromRGB(65, 65, 65)
+    end)
+    Button.MouseLeave:Connect(function()
+        Button.BackgroundColor3 = SkillManager.active["front"] 
+            and Color3.fromRGB(0, 170, 0) 
+            or originalColor
+    end)
+
+    Button.MouseButton1Click:Connect(function()
+        SkillManager.active["front"] = not SkillManager.active["front"]
+        Button.Text = "Auto Front " .. (SkillManager.active["front"] and "(ON)" or "(OFF)")
+        Button.BackgroundColor3 = SkillManager.active["front"] 
+            and Color3.fromRGB(0, 170, 0) 
+            or originalColor
+
+        if SkillManager.active["front"] then
+            spawn(function()
+                while SkillManager.active["front"] and Button and Button.Parent do
+                    local args = {
+                        [1] = {
+                            Bool = false,
+                            Request = "FrontDash",
+                        },
+                    }
+                    
+                    pcall(function()
+                        if _vars.player.Character then
+                            _vars.workspace[_vars.chars][_vars.player.Name][_vars.net]:FireServer(unpack(args))
+                        end
+                    end)
+                    
+                    wait(0.1 + math.random() * 0.2)
+                end
+            end)
+        end
+    end)
+end
+
+createAutoFrontButton(0.55, 340)
+
+local function createAutoClickButton(xPos, yPos)
+    local Button = Instance.new("TextButton")
+    Button.Name = generateRandomName()
+    Button.Size = UDim2.new(0.4, 0, 0, 40) -- Same size as Auto Front button
+    Button.Position = UDim2.new(xPos, 0, 0, yPos)
+    Button.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+    Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Button.TextSize = 16
+    Button.Text = "Auto Click (OFF)"
+    Button.Font = Enum.Font.SourceSans
+    Button.Parent = MainFrame
+
+    -- Add hover effect
+    local originalColor = Button.BackgroundColor3
+    Button.MouseEnter:Connect(function()
+        Button.BackgroundColor3 = Color3.fromRGB(65, 65, 65)
+    end)
+    Button.MouseLeave:Connect(function()
+        Button.BackgroundColor3 = SkillManager.active["autoclick"] 
+            and Color3.fromRGB(0, 170, 0) 
+            or originalColor
+    end)
+
+    -- Auto Click functionality
+    Button.MouseButton1Click:Connect(function()
+        SkillManager.active["autoclick"] = not SkillManager.active["autoclick"]
+        Button.Text = "Auto Click " .. (SkillManager.active["autoclick"] and "(ON)" or "(OFF)")
+        Button.BackgroundColor3 = SkillManager.active["autoclick"] 
+            and Color3.fromRGB(0, 170, 0) 
+            or originalColor
+
+        if SkillManager.active["autoclick"] then
+            spawn(function()
+                while SkillManager.active["autoclick"] and Button and Button.Parent do
+                    -- Simulate left mouse click
+                    local args = {
+                        [1] = {
+                            ["Request"] = "Click"
+                        }
+                    }
+                    
+                    pcall(function()
+                        if _vars.player.Character then
+                            _vars.workspace[_vars.chars][_vars.player.Name][_vars.net]:FireServer(unpack(args))
+                        end
+                    end)
+                    
+                    -- Add random delay between clicks
+                    wait(0.1 + math.random() * 0.2)
+                end
+            end)
+        end
+    end)
+end
+
+local function createAutoClickButton(xPos, yPos)
+    local Button = Instance.new("TextButton")
+    Button.Name = generateRandomName()
+    Button.Size = UDim2.new(0.4, 0, 0, 40)
+    Button.Position = UDim2.new(xPos, 0, 0, yPos)
+    Button.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+    Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Button.TextSize = 16
+    Button.Text = "Auto M1 (C)"
+    Button.Font = Enum.Font.SourceSans
+    Button.Parent = MainFrame
+
+    -- Add hover effect
+    local originalColor = Button.BackgroundColor3
+    Button.MouseEnter:Connect(function()
+        Button.BackgroundColor3 = Color3.fromRGB(65, 65, 65)
+    end)
+    Button.MouseLeave:Connect(function()
+        Button.BackgroundColor3 = SkillManager.active["autom1"] 
+            and Color3.fromRGB(0, 170, 0) 
+            or originalColor
+    end)
+
+    Button.MouseButton1Click:Connect(function()
+        SkillManager.active["autom1"] = not SkillManager.active["autom1"]
+        Button.Text = "Auto M1 " .. (SkillManager.active["autom1"] and "(ON)" or "(OFF)")
+        Button.BackgroundColor3 = SkillManager.active["autom1"] 
+            and Color3.fromRGB(0, 170, 0) 
+            or originalColor
+
+        if SkillManager.active["autom1"] then
+            spawn(function()
+                while SkillManager.active["autom1"] and Button and Button.Parent do
+                    -- Your specific network call
+                    local args = {
+                        [1] = {
+                            Request = "M1Down",
+                        }
+                    }
+                    
+                    pcall(function()
+                        if game["Workspace"] and game["Workspace"]["VFX"] then
+                            game["Workspace"]["VFX"]["FlyingRocksStorage"][_vars.player.Name]["Network"]:FireServer(unpack(args))
+                        end
+                    end)
+                    
+                    -- Add random delay between actions
+                    wait(0.1 + math.random() * 0.2)
+                end
+            end)
+        end
+    end)
+end
+
+local UserInputService = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
+
+local autoClick = false -- Состояние автоклика
+local clickDelay = 0.1 -- Интервал между кликами (в секундах)
+
+-- Функция для показа уведомления
+local function showNotification(title, text, duration)
+	pcall(function()
+		StarterGui:SetCore("SendNotification", {
+			Title = title,
+			Text = text,
+			Duration = duration or 2
+		})
+	end)
+end
+
+-- Переключение автоклика по кнопке "C"
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if input.KeyCode == Enum.KeyCode.C then
+		autoClick = not autoClick
+		if autoClick then
+			showNotification("AutoClicker", "Включен", 2)
+		else
+			showNotification("AutoClicker", "Выключен", 2)
+		end
+	end
+end)
+
+-- Функция автоклика
+RunService.RenderStepped:Connect(function()
+	if autoClick then
+		VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+		VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+		task.wait(clickDelay)
+	end
+end)
+
+createAutoClickButton(0.05, 340)
+
+local function createDeleteButton(yPos)
+    local Button = Instance.new("TextButton")
+    Button.Name = generateRandomName()
+    Button.Size = UDim2.new(0.9, 0, 0, 40)
+    Button.Position = UDim2.new(0.05, 0, 0, yPos)
+    Button.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+    Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Button.TextSize = 16
+    Button.Text = "Delete GUI"
+    Button.Font = Enum.Font.SourceSansBold
+    Button.Parent = MainFrame
+
+    -- Hover effect
+    local originalColor = Button.BackgroundColor3
+    Button.MouseEnter:Connect(function()
+        Button.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+    end)
+    Button.MouseLeave:Connect(function()
+        Button.BackgroundColor3 = originalColor
+    end)
+
+    -- Delete action
+    Button.MouseButton1Click:Connect(function()
+        ScreenGui:Destroy()
+    end)
+end
+
+-- Add Delete Button under all other elements
+createDeleteButton(390)
